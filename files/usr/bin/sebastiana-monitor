@@ -1,0 +1,290 @@
+#!/bin/sh
+
+############################
+# SEBASTIANA MONITOR v2.1
+# Temporal + Cached Edition
+############################
+
+ENV_FILE="/etc/sebastiana/config.env"
+[ -f "$ENV_FILE" ] || exit 1
+. "$ENV_FILE"
+
+STATE_DIR="/tmp/sebastiana"
+mkdir -p "$STATE_DIR"
+
+WAN_STATE="$STATE_DIR/wan_state"
+FAILOVER_STATE="$STATE_DIR/failover_state"
+IP_STATE="$STATE_DIR/public_ip"
+SSH_STATE="$STATE_DIR/ssh_alert"
+DAILY_STATE="$STATE_DIR/daily_sent"
+SCAN_STATE="$STATE_DIR/scan_alert"
+
+WHITELIST="/etc/sebastiana_mac_allowlist"
+
+############################
+# LOG CACHE (Performance)
+############################
+
+LOG_CACHE="$(logread)"
+CURRENT_MIN="$(date '+%b %d %H:%M')"
+CURRENT_HOUR="$(date '+%b %d %H')"
+
+############################
+# TELEGRAM
+############################
+
+send_telegram() {
+    curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+        --data-urlencode "chat_id=$CHAT_ID" \
+        --data-urlencode "text=$1" \
+        --data-urlencode "parse_mode=HTML" \
+        --connect-timeout 5 > /dev/null 2>&1
+}
+
+log_event() {
+    LEVEL="$1"
+    MESSAGE="$2"
+
+    FINAL_MESSAGE="📡 <b>SEBASTIANA</b> | <b>$LEVEL</b>
+
+$MESSAGE"
+
+    send_telegram "$FINAL_MESSAGE"
+}
+
+############################
+# 1️⃣ WAN STATUS
+############################
+
+check_wan() {
+
+    WAN1=$(ubus call network.interface.wan status | jsonfilter -e '@.up')
+    WAN2=$(ubus call network.interface.wan2 status 2>/dev/null | jsonfilter -e '@.up')
+
+    WAN1=${WAN1:-false}
+    WAN2=${WAN2:-false}
+
+    [ -f "$WAN_STATE" ] || echo "WAN1_OLD=unknown WAN2_OLD=unknown" > "$WAN_STATE"
+    . "$WAN_STATE"
+
+    CURRENT_WAN1=$([ "$WAN1" = "true" ] && echo "online" || echo "offline")
+    CURRENT_WAN2=$([ "$WAN2" = "true" ] && echo "online" || echo "offline")
+
+    [ "$CURRENT_WAN1" != "$WAN1_OLD" ] && log_event "INFO" "WAN1 $CURRENT_WAN1"
+    [ "$CURRENT_WAN2" != "$WAN2_OLD" ] && log_event "INFO" "WAN2 $CURRENT_WAN2"
+
+    echo "WAN1_OLD=$CURRENT_WAN1 WAN2_OLD=$CURRENT_WAN2" > "$WAN_STATE"
+}
+
+############################
+# 2️⃣ FAILOVER
+############################
+
+check_failover() {
+
+    ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {print $5}')
+
+    if [ "$ROUTE" = "wan2" ]; then
+        [ ! -f "$FAILOVER_STATE" ] && \
+        log_event "WARNING" "Failover ativo (WAN2 em uso)." && \
+        touch "$FAILOVER_STATE"
+    else
+        [ -f "$FAILOVER_STATE" ] && \
+        log_event "INFO" "WAN primária restaurada." && \
+        rm -f "$FAILOVER_STATE"
+    fi
+}
+
+############################
+# 3️⃣ PUBLIC IP CHANGE
+############################
+
+check_public_ip() {
+
+    # Buscar IP publico real
+    CURRENT_IP=$(curl -s --connect-timeout 5 https://api.ipify.org)
+
+    # Validar formato IPv4
+    echo "$CURRENT_IP" | grep -qE '^[0-9]+\.' || return
+
+    if [ ! -f "$IP_STATE" ]; then
+        echo "$CURRENT_IP" > "$IP_STATE"
+    else
+        OLD_IP=$(cat "$IP_STATE")
+
+        if [ "$CURRENT_IP" != "$OLD_IP" ]; then
+            log_event "WARNING" "IP Público REAL alterado
+
+Antigo: $OLD_IP
+Novo: $CURRENT_IP"
+
+            echo "$CURRENT_IP" > "$IP_STATE"
+        fi
+    fi
+}
+
+############################
+# 4️⃣ SSH BRUTE FORCE (TEMPORAL)
+############################
+
+check_ssh() {
+
+    COUNT=$(echo "$LOG_CACHE" | \
+        grep "$CURRENT_HOUR" | \
+        grep "Failed password" | wc -l)
+
+    if [ "$COUNT" -gt 10 ]; then
+        [ ! -f "$SSH_STATE" ] && \
+        log_event "CRITICAL" "$COUNT tentativas SSH na última hora." && \
+        touch "$SSH_STATE"
+    else
+        rm -f "$SSH_STATE"
+    fi
+}
+
+############################
+# 5️⃣ NAC INTELIGENTE v3
+############################
+
+check_mac() {
+
+    [ -f "$WHITELIST" ] || touch "$WHITELIST"
+
+    ip neigh show | while read -r IP _ DEV _ MAC STATE _; do
+
+        # Ignorar IPv6
+        echo "$IP" | grep -qE '^[0-9]+\.' || continue
+
+        # Ignorar entradas sem MAC real
+        echo "$MAC" | grep -q ":" || continue
+
+        # Ignorar FAILED
+        [ "$STATE" = "FAILED" ] && continue
+
+        MAC=$(echo "$MAC" | tr 'A-Z' 'a-z')
+
+        # -------------------
+        # VLAN NAME
+        # -------------------
+        VLAN_NAME="UNKNOWN"
+
+        case "$DEV" in
+            br-lan.30) VLAN_NAME="USERS" ;;
+            br-lan.40) VLAN_NAME="IOT" ;;
+            br-lan.50) VLAN_NAME="GUEST" ;;
+            br-lan.20) VLAN_NAME="LAB" ;;
+            br-lan.1)  VLAN_NAME="LAN" ;;
+        esac
+
+        # -------------------
+        # HOSTNAME (DHCP)
+        # -------------------
+        HOSTNAME=$(awk -v mac="$MAC" 'tolower($2)==mac {print $4}' /tmp/dhcp.leases)
+        [ -z "$HOSTNAME" ] && HOSTNAME="desconhecido"
+
+        # -------------------
+        # CABO OU WIFI + SSID REAL
+        # -------------------
+
+        CONNECTION_TYPE="Cabo"
+        WIFI_SSID="N/A"
+
+        for iface in $(iw dev | awk '$1=="Interface"{print $2}'); do
+                if iw dev "$iface" station dump | grep -iq "$MAC"; then
+                        CONNECTION_TYPE="WiFi"
+
+                        SSID_JSON=$(ubus call hostapd.$iface get_status 2>/dev/null)
+                        WIFI_SSID=$(echo "$SSID_JSON" | jsonfilter -e '@.ssid')
+
+                        [ -z "$WIFI_SSID" ] && WIFI_SSID="SSID_desconhecido"
+                        break
+                fi
+        done
+
+        # -------------------
+        # WHITELIST
+        # -------------------
+        if ! grep -iq "^$MAC$" "$WHITELIST"; then
+
+            log_event "CRITICAL" "Novo dispositivo detectado
+
+IP: $IP
+MAC: $MAC
+Hostname: $HOSTNAME
+VLAN: $VLAN_NAME
+Conexao: $CONNECTION_TYPE
+WiFi Rede: $WIFI_SSID
+Estado ARP: $STATE"
+
+        fi
+
+    done
+}
+
+
+############################
+# 6️⃣ INTERNAL SCAN (TEMPORAL)
+############################
+
+check_internal_scan() {
+
+    COUNT=$(echo "$LOG_CACHE" | \
+        grep "$CURRENT_MIN" | \
+        grep "SEBASTIANA_DROP" | wc -l)
+
+    if [ "$COUNT" -gt 20 ]; then
+        if [ ! -f "$SCAN_STATE" ]; then
+
+            ATTACKER=$(echo "$LOG_CACHE" | \
+                grep "$CURRENT_MIN" | \
+                grep "SEBASTIANA_DROP" | \
+                awk '{for(i=1;i<=NF;i++) if($i ~ /SRC=/){split($i,a,"="); print a[2]}}' | \
+                sort | uniq -c | sort -nr | head -n1)
+
+            log_event "CRITICAL" "Possível scan interno detectado.
+
+Eventos no último minuto: $COUNT
+Principal origem: $ATTACKER"
+
+            touch "$SCAN_STATE"
+        fi
+    else
+        rm -f "$SCAN_STATE"
+    fi
+}
+
+############################
+# 7️⃣ DAILY REPORT
+############################
+
+daily_report() {
+
+    HOUR=$(date +"%H")
+
+    if [ "$HOUR" = "08" ] && [ ! -f "$DAILY_STATE" ]; then
+
+        LOAD=$(uptime | awk -F'load average:' '{ print $2 }')
+        MEM=$(free | grep Mem | awk '{print int($3/$2 * 100)}')
+
+        log_event "INFO" "Daily Report
+
+CPU Load:$LOAD
+RAM:${MEM}%"
+
+        touch "$DAILY_STATE"
+    fi
+
+    [ "$HOUR" = "09" ] && rm -f "$DAILY_STATE"
+}
+
+############################
+# EXECUTION
+############################
+
+check_wan
+check_failover
+check_public_ip
+check_ssh
+check_mac
+check_internal_scan
+daily_report

@@ -1,0 +1,173 @@
+#!/bin/sh
+
+. /root/telegram_lib.sh
+
+SECRET="SENHA_FORTE_AQUI"
+STATE_FILE="/tmp/telegram_state"
+AUDIT_LOG="/root/telegram_audit.log"
+
+log_action() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> $AUDIT_LOG
+}
+
+process_status() {
+
+    UPTIME=$(uptime)
+    LOAD=$(cat /proc/loadavg | awk '{print $1,$2,$3}')
+    MEM=$(free | grep Mem | awk '{print "Mem livre:",$4}')
+    WAN1=$(curl -s --interface wan https://api.ipify.org 2>/dev/null)
+
+    send_message "📊 STATUS
+
+🕒 $UPTIME
+📈 Load: $LOAD
+💾 $MEM
+🌐 WAN1: $WAN1"
+}
+
+cancel_flow() {
+    rm -f $STATE_FILE
+    send_message "❌ Operação cancelada."
+    log_action "Operação cancelada pelo usuário"
+}
+
+mac_exists() {
+    grep -iq "^$1$" /root/mac_allowlist 2>/dev/null
+}
+
+ip_exists() {
+    uci show dhcp | grep -q "ip='$1'"
+}
+
+process_flow() {
+
+    [ ! -f "$STATE_FILE" ] && return
+    . "$STATE_FILE"
+
+    case "$STEP" in
+
+        "WAIT_MAC")
+            echo "$1" | grep -qE '^([A-Fa-f0-9]{2}:){5}[A-Fa-f0-9]{2}$' || {
+                send_message "MAC inválido."
+                return
+            }
+
+            MAC=$(echo "$1" | tr '[:lower:]' '[:upper:]')
+
+            if mac_exists "$MAC"; then
+                send_message "⚠ MAC já está na allowlist."
+                cancel_flow
+                return
+            fi
+
+            echo "STEP=WAIT_NAME
+MAC=$MAC" > $STATE_FILE
+
+            send_message "Informe o nome:"
+        ;;
+
+        "WAIT_NAME")
+            echo "STEP=WAIT_IP
+MAC=$MAC
+NAME=$1" > $STATE_FILE
+
+            send_message "Informe o IP:"
+        ;;
+
+        "WAIT_IP")
+
+            echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
+                send_message "IP inválido."
+                return
+            }
+
+            if ip_exists "$1"; then
+                send_message "⚠ IP já está em uso no DHCP."
+                cancel_flow
+                return
+            fi
+
+            echo "STEP=WAIT_PASS
+MAC=$MAC
+NAME=$NAME
+IP=$1" > $STATE_FILE
+
+            send_message "Resumo:
+
+MAC: $MAC
+Nome: $NAME
+IP: $1
+
+Digite a senha para confirmar:"
+        ;;
+
+        "WAIT_PASS")
+
+            if [ "$1" != "$SECRET" ]; then
+                send_message "Senha incorreta. Cancelado."
+                log_action "Tentativa com senha incorreta para MAC $MAC"
+                cancel_flow
+                return
+            fi
+
+            # Adiciona allowlist
+            echo "$MAC" >> /root/mac_allowlist
+
+            # Reserva DHCP
+            uci add dhcp host
+            uci set dhcp.@host[-1].name="$NAME"
+            uci set dhcp.@host[-1].mac="$MAC"
+            uci set dhcp.@host[-1].ip="$IP"
+            uci commit dhcp
+            /etc/init.d/dnsmasq restart
+
+            send_message "✅ MAC cadastrado com sucesso!"
+            log_action "MAC $MAC ($NAME - $IP) cadastrado com sucesso"
+
+            rm -f $STATE_FILE
+        ;;
+
+    esac
+}
+
+process_message() {
+
+    RESPONSE=$(get_updates)
+
+    TEXT=$(echo "$RESPONSE" | jsonfilter -e '@.result[-1].message.text')
+    UPDATE_ID=$(echo "$RESPONSE" | jsonfilter -e '@.result[-1].update_id')
+    CHAT=$(echo "$RESPONSE" | jsonfilter -e '@.result[-1].message.chat.id')
+    SENDER=$(echo "$RESPONSE" | jsonfilter -e '@.result[-1].message.from.id')
+
+    [ -z "$TEXT" ] && return
+    [ "$CHAT" != "$CHAT_ID" ] && return
+    [ "$SENDER" != "$USER_ID" ] && return
+
+    echo "$UPDATE_ID" > /tmp/telegram_last
+
+    case "$TEXT" in
+
+        "/status")
+            process_status
+        ;;
+
+        "/adiciona_mac")
+            echo "STEP=WAIT_MAC" > $STATE_FILE
+            send_message "Informe o MAC (ou /cancelar)"
+        ;;
+
+        "/cancelar")
+            cancel_flow
+        ;;
+
+        *)
+            process_flow "$TEXT"
+        ;;
+
+    esac
+}
+
+while true; do
+    process_message
+    sleep 15
+done
