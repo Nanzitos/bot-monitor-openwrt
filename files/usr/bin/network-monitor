@@ -1,16 +1,15 @@
 #!/bin/sh
 
 ############################
-# SEBASTIANA MONITOR v2.1
-# Temporal + Cached Edition
+# network-monitor v2.2
+# OpenWrt / config.env / libs
 ############################
 
-ENV_FILE="/etc/sebastiana/config.env"
-[ -f "$ENV_FILE" ] || exit 1
-. "$ENV_FILE"
+. /usr/lib/monitor/configs.sh || exit 1
+. /usr/lib/monitor/utils.sh
+. /usr/lib/monitor/telegram.sh
 
-STATE_DIR="/tmp/sebastiana"
-mkdir -p "$STATE_DIR"
+mkdir -p "$STATE_DIR" "$LOG_DIR"
 
 WAN_STATE="$STATE_DIR/wan_state"
 FAILOVER_STATE="$STATE_DIR/failover_state"
@@ -18,8 +17,7 @@ IP_STATE="$STATE_DIR/public_ip"
 SSH_STATE="$STATE_DIR/ssh_alert"
 DAILY_STATE="$STATE_DIR/daily_sent"
 SCAN_STATE="$STATE_DIR/scan_alert"
-
-WHITELIST="/etc/sebastiana_mac_allowlist"
+WIFI_CACHE="$STATE_DIR/wifi_stations.cache"
 
 ############################
 # LOG CACHE (Performance)
@@ -30,34 +28,42 @@ CURRENT_MIN="$(date '+%b %d %H:%M')"
 CURRENT_HOUR="$(date '+%b %d %H')"
 
 ############################
-# TELEGRAM
+# TELEGRAM (HTML)
 ############################
-
-send_telegram() {
-    curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-        --data-urlencode "chat_id=$CHAT_ID" \
-        --data-urlencode "text=$1" \
-        --data-urlencode "parse_mode=HTML" \
-        --connect-timeout 5 > /dev/null 2>&1
-}
 
 log_event() {
     LEVEL="$1"
     MESSAGE="$2"
 
-    FINAL_MESSAGE="📡 <b>SEBASTIANA</b> | <b>$LEVEL</b>
+    FINAL_MESSAGE="📡 <b>MONITOR</b> | <b>$LEVEL</b>
 
 $MESSAGE"
 
-    send_telegram "$FINAL_MESSAGE"
+    send_message_html "$FINAL_MESSAGE" || monitor_log "telegram: log_event falhou ($LEVEL)"
 }
 
 ############################
-# 1️⃣ WAN STATUS
+# WiFi: cache por ciclo (menos iw)
+############################
+
+build_wifi_cache() {
+    _tmp="${WIFI_CACHE}.tmp"
+    : > "$_tmp"
+    for iface in $(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}'); do
+        SSID_JSON=$(ubus call "hostapd.$iface" get_status 2>/dev/null)
+        WIFI_SSID=$(echo "$SSID_JSON" | jsonfilter -e '@.ssid' 2>/dev/null)
+        [ -z "$WIFI_SSID" ] && WIFI_SSID="unknown"
+        iw dev "$iface" station dump 2>/dev/null | awk -v ifc="$iface" -v ssid="$WIFI_SSID" \
+            '$1=="Station"{print tolower($2)"|"ifc"|"ssid}' >> "$_tmp"
+    done
+    mv "$_tmp" "$WIFI_CACHE" 2>/dev/null || rm -f "$_tmp"
+}
+
+############################
+# WAN STATUS
 ############################
 
 check_wan() {
-
     WAN1=$(ubus call network.interface.wan status | jsonfilter -e '@.up')
     WAN2=$(ubus call network.interface.wan2 status 2>/dev/null | jsonfilter -e '@.up')
 
@@ -77,11 +83,10 @@ check_wan() {
 }
 
 ############################
-# 2️⃣ FAILOVER
+# FAILOVER
 ############################
 
 check_failover() {
-
     ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {print $5}')
 
     if [ "$ROUTE" = "wan2" ]; then
@@ -96,16 +101,13 @@ check_failover() {
 }
 
 ############################
-# 3️⃣ PUBLIC IP CHANGE
+# PUBLIC IP CHANGE
 ############################
 
 check_public_ip() {
-
-    # Buscar IP publico real
-    CURRENT_IP=$(curl -s --connect-timeout 5 https://api.ipify.org)
-
-    # Validar formato IPv4
-    echo "$CURRENT_IP" | grep -qE '^[0-9]+\.' || return
+    CURRENT_IP=$(curl -sS --connect-timeout 8 --max-time 15 "https://api.ipify.org" 2>/dev/null) || return 0
+    [ -z "$CURRENT_IP" ] && return 0
+    echo "$CURRENT_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || return 0
 
     if [ ! -f "$IP_STATE" ]; then
         echo "$CURRENT_IP" > "$IP_STATE"
@@ -124,11 +126,10 @@ Novo: $CURRENT_IP"
 }
 
 ############################
-# 4️⃣ SSH BRUTE FORCE (TEMPORAL)
+# SSH BRUTE FORCE (TEMPORAL)
 ############################
 
 check_ssh() {
-
     COUNT=$(echo "$LOG_CACHE" | \
         grep "$CURRENT_HOUR" | \
         grep "Failed password" | wc -l)
@@ -143,31 +144,22 @@ check_ssh() {
 }
 
 ############################
-# 5️⃣ NAC INTELIGENTE v3
+# NAC / allowlist
 ############################
 
 check_mac() {
+    [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
 
-    [ -f "$WHITELIST" ] || touch "$WHITELIST"
+    build_wifi_cache
 
     ip neigh show | while read -r IP _ DEV _ MAC STATE _; do
-
-        # Ignorar IPv6
         echo "$IP" | grep -qE '^[0-9]+\.' || continue
-
-        # Ignorar entradas sem MAC real
         echo "$MAC" | grep -q ":" || continue
-
-        # Ignorar FAILED
         [ "$STATE" = "FAILED" ] && continue
 
         MAC=$(echo "$MAC" | tr 'A-Z' 'a-z')
 
-        # -------------------
-        # VLAN NAME
-        # -------------------
         VLAN_NAME="UNKNOWN"
-
         case "$DEV" in
             br-lan.30) VLAN_NAME="USERS" ;;
             br-lan.40) VLAN_NAME="IOT" ;;
@@ -176,36 +168,19 @@ check_mac() {
             br-lan.1)  VLAN_NAME="LAN" ;;
         esac
 
-        # -------------------
-        # HOSTNAME (DHCP)
-        # -------------------
-        HOSTNAME=$(awk -v mac="$MAC" 'tolower($2)==mac {print $4}' /tmp/dhcp.leases)
+        HOSTNAME=$(awk -v mac="$MAC" 'tolower($2)==mac {print $4}' /tmp/dhcp.leases 2>/dev/null)
         [ -z "$HOSTNAME" ] && HOSTNAME="desconhecido"
-
-        # -------------------
-        # CABO OU WIFI + SSID REAL
-        # -------------------
 
         CONNECTION_TYPE="Cabo"
         WIFI_SSID="N/A"
+        _wline=$(grep -F "${MAC}|" "$WIFI_CACHE" 2>/dev/null | head -n1)
+        if [ -n "$_wline" ]; then
+            CONNECTION_TYPE="WiFi"
+            WIFI_SSID=$(echo "$_wline" | cut -d'|' -f3)
+            [ -z "$WIFI_SSID" ] && WIFI_SSID="SSID_desconhecido"
+        fi
 
-        for iface in $(iw dev | awk '$1=="Interface"{print $2}'); do
-                if iw dev "$iface" station dump | grep -iq "$MAC"; then
-                        CONNECTION_TYPE="WiFi"
-
-                        SSID_JSON=$(ubus call hostapd.$iface get_status 2>/dev/null)
-                        WIFI_SSID=$(echo "$SSID_JSON" | jsonfilter -e '@.ssid')
-
-                        [ -z "$WIFI_SSID" ] && WIFI_SSID="SSID_desconhecido"
-                        break
-                fi
-        done
-
-        # -------------------
-        # WHITELIST
-        # -------------------
-        if ! grep -iq "^$MAC$" "$WHITELIST"; then
-
+        if ! grep -iq "^$MAC$" "$ALLOWLIST"; then
             log_event "CRITICAL" "Novo dispositivo detectado
 
 IP: $IP
@@ -215,29 +190,25 @@ VLAN: $VLAN_NAME
 Conexao: $CONNECTION_TYPE
 WiFi Rede: $WIFI_SSID
 Estado ARP: $STATE"
-
         fi
-
     done
 }
 
-
 ############################
-# 6️⃣ INTERNAL SCAN (TEMPORAL)
+# INTERNAL SCAN (TEMPORAL)
+# Marca de firewall: MONITOR_DROP (ajuste regras iptables/nft se usava SEBASTIANA_DROP)
 ############################
 
 check_internal_scan() {
-
     COUNT=$(echo "$LOG_CACHE" | \
         grep "$CURRENT_MIN" | \
-        grep "SEBASTIANA_DROP" | wc -l)
+        grep "MONITOR_DROP" | wc -l)
 
     if [ "$COUNT" -gt 20 ]; then
         if [ ! -f "$SCAN_STATE" ]; then
-
             ATTACKER=$(echo "$LOG_CACHE" | \
                 grep "$CURRENT_MIN" | \
-                grep "SEBASTIANA_DROP" | \
+                grep "MONITOR_DROP" | \
                 awk '{for(i=1;i<=NF;i++) if($i ~ /SRC=/){split($i,a,"="); print a[2]}}' | \
                 sort | uniq -c | sort -nr | head -n1)
 
@@ -254,17 +225,15 @@ Principal origem: $ATTACKER"
 }
 
 ############################
-# 7️⃣ DAILY REPORT
+# DAILY REPORT
 ############################
 
 daily_report() {
-
     HOUR=$(date +"%H")
 
     if [ "$HOUR" = "08" ] && [ ! -f "$DAILY_STATE" ]; then
-
         LOAD=$(uptime | awk -F'load average:' '{ print $2 }')
-        MEM=$(free | grep Mem | awk '{print int($3/$2 * 100)}')
+        MEM=$(mem_usage_percent)
 
         log_event "INFO" "Daily Report
 

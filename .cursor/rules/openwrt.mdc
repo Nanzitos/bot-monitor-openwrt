@@ -1,0 +1,24 @@
+---
+description: Alvo e restrições OpenWrt para este repositório (Monitor / bot-monitor)
+alwaysApply: true
+---
+
+# Contexto: OpenWrt
+
+Este projeto é **código e pacote para roteador OpenWrt**, não para servidor Linux genérico.
+
+## Shell e ferramentas
+
+- Shell padrão: **ash** (BusyBox), não bash. Evitar `[[ ]]`, arrays complexos, `${var:0:3}` e outras extensões bash-only.
+- Preferir utilitários típicos do OpenWrt: **ubus**, **UCI**, **jsonfilter**, **curl**, `/sbin/` e `/usr/sbin/` do sistema.
+- Dependências extras só via `DEPENDS` no `Makefile` do pacote e uso real no código; evitar peso desnecessário (RAM/flash limitadas).
+
+## Empacotamento
+
+- O layout segue **pacote OpenWrt** (`Makefile` + `files/`); caminhos em `files/` refletem o root do roteador após instalação (pacote `monitor`, paths `/etc/monitor`, `/usr/lib/monitor`).
+
+## Robustez
+
+- Tratar falha de rede, reboot e storage pequeno; evitar loops sem backoff onde fizer sentido; não assumir systemd (usa **procd**/init scripts).
+
+Ao sugerir ou escrever código, **sempre validar compatibilidade com BusyBox/OpenWrt** antes de propor soluções de desktop/server.

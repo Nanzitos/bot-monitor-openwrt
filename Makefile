@@ -1,43 +1,43 @@
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=sebastiana
+PKG_NAME:=monitor
 PKG_VERSION:=1.0
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
-define Package/sebastiana
+define Package/monitor
   SECTION:=utils
   CATEGORY:=Utilities
-  TITLE:=Sebastiana Network Monitor
-  DEPENDS:=+curl +jq
+  TITLE:=OpenWrt Monitor (Telegram)
+  DEPENDS:=+curl +jsonfilter
 endef
 
-define Package/sebastiana/description
- Sistema de monitoramento e automação via Telegram
+define Package/monitor/description
+ Monitoramento de rede e automação via Telegram
 endef
 
-define Package/sebastiana/conffiles
-/etc/sebastiana/config.env
-/etc/sebastiana/mac_allowlist
+define Package/monitor/conffiles
+/etc/monitor/config.env
+/etc/monitor/mac_allowlist
 endef
 
-define Package/sebastiana/install
-	$(INSTALL_DIR) $(1)/etc/sebastiana
-	$(INSTALL_DATA) ./files/etc/sebastiana/config.env $(1)/etc/sebastiana/
-	$(INSTALL_DATA) ./files/etc/sebastiana/mac_allowlist $(1)/etc/sebastiana/
+define Package/monitor/install
+	$(INSTALL_DIR) $(1)/etc/monitor
+	$(INSTALL_DATA) ./files/etc/monitor/config.env $(1)/etc/monitor/
+	$(INSTALL_DATA) ./files/etc/monitor/mac_allowlist $(1)/etc/monitor/
 
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/usr/bin/sebastiana-monitor $(1)/usr/bin/
-	$(INSTALL_BIN) ./files/usr/bin/sebastiana-bot $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/bin/network-monitor $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/bin/monitor-bot $(1)/usr/bin/
 
-	$(INSTALL_DIR) $(1)/usr/lib/sebastiana
-	$(INSTALL_DATA) ./files/usr/lib/sebastiana/* $(1)/usr/lib/sebastiana/
+	$(INSTALL_DIR) $(1)/usr/lib/monitor
+	$(INSTALL_DATA) ./files/usr/lib/monitor/* $(1)/usr/lib/monitor/
 
-	$(INSTALL_DIR) $(1)/var/log/sebastiana
+	$(INSTALL_DIR) $(1)/var/log/monitor
 
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/etc/init.d/sebastiana $(1)/etc/init.d/
+	$(INSTALL_BIN) ./files/etc/init.d/monitor $(1)/etc/init.d/
 endef
 
-$(eval $(call BuildPackage,sebastiana))
+$(eval $(call BuildPackage,monitor))

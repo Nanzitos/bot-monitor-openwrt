@@ -1,0 +1,216 @@
+#!/bin/sh
+
+. /usr/lib/monitor/configs.sh || exit 1
+. /usr/lib/monitor/utils.sh
+. /usr/lib/monitor/telegram.sh
+
+mkdir -p "$STATE_DIR" "$LOG_DIR"
+
+STATE_FILE="${STATE_DIR}/telegram_flow_state"
+AUDIT_LOG="${LOG_DIR}/telegram_audit.log"
+DNSMASQ_GUARD="${STATE_DIR}/dnsmasq_last_restart"
+
+log_action() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$AUDIT_LOG" 2>/dev/null || true
+}
+
+dnsmasq_restart_throttled() {
+    _now=$(date +%s)
+    _last=$(cat "$DNSMASQ_GUARD" 2>/dev/null || echo 0)
+    if [ "$_last" -gt 0 ] 2>/dev/null && [ $((_now - _last)) -lt 90 ]; then
+        send_message "Reinício do dnsmasq em cooldown (~90s). Tente de novo."
+        return 1
+    fi
+    date +%s > "$DNSMASQ_GUARD"
+    /etc/init.d/dnsmasq restart
+    return 0
+}
+
+process_status() {
+    UPTIME=$(uptime)
+    LOAD=$(awk '{print $1,$2,$3}' /proc/loadavg)
+    MEM=$(mem_usage_percent)
+    WAN1=$(curl -sS --connect-timeout 8 --max-time 15 --interface wan "https://api.ipify.org" 2>/dev/null || true)
+
+    send_message "STATUS
+
+$UPTIME
+Load: $LOAD
+RAM uso ~${MEM}%
+WAN1 IP: ${WAN1:-?}"
+}
+
+cancel_flow() {
+    rm -f "$STATE_FILE"
+    send_message "Operacao cancelada."
+    log_action "Operacao cancelada pelo usuario"
+}
+
+mac_exists() {
+    grep -iq "^$1$" "$ALLOWLIST" 2>/dev/null
+}
+
+dhcp_mac_exists() {
+    uci show dhcp 2>/dev/null | grep -qi "mac='$1'"
+}
+
+dhcp_ip_exists() {
+    uci show dhcp 2>/dev/null | grep -Fq "ip='$1'"
+}
+
+process_flow() {
+    [ ! -f "$STATE_FILE" ] && return
+    . "$STATE_FILE"
+
+    case "$STEP" in
+        "WAIT_MAC")
+            echo "$1" | grep -qE '^([A-Fa-f0-9]{2}:){5}[A-Fa-f0-9]{2}$' || {
+                send_message "MAC invalido."
+                return
+            }
+
+            MAC=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+
+            if mac_exists "$MAC" || dhcp_mac_exists "$MAC"; then
+                send_message "MAC ja esta na allowlist ou reserva DHCP."
+                cancel_flow
+                return
+            fi
+
+            echo "STEP=WAIT_NAME
+MAC=$MAC" > "$STATE_FILE"
+
+            send_message "Informe o nome:"
+        ;;
+
+        "WAIT_NAME")
+            echo "STEP=WAIT_IP
+MAC=$MAC
+NAME=$1" > "$STATE_FILE"
+
+            send_message "Informe o IP:"
+        ;;
+
+        "WAIT_IP")
+            echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
+                send_message "IP invalido."
+                return
+            }
+
+            if dhcp_ip_exists "$1"; then
+                send_message "IP ja esta em uso no DHCP."
+                cancel_flow
+                return
+            fi
+
+            echo "STEP=WAIT_PASS
+MAC=$MAC
+NAME=$NAME
+IP=$1" > "$STATE_FILE"
+
+            send_message "Resumo:
+
+MAC: $MAC
+Nome: $NAME
+IP: $1
+
+Digite a senha para confirmar:"
+        ;;
+
+        "WAIT_PASS")
+            if [ "$1" != "$SECRET" ]; then
+                send_message "Senha incorreta. Cancelado."
+                log_action "Tentativa com senha incorreta para MAC $MAC"
+                cancel_flow
+                return
+            fi
+
+            [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
+            echo "$MAC" >> "$ALLOWLIST"
+
+            uci add dhcp host
+            uci set dhcp.@host[-1].name="$NAME"
+            uci set dhcp.@host[-1].mac="$MAC"
+            uci set dhcp.@host[-1].ip="$IP"
+            uci commit dhcp
+
+            if dnsmasq_restart_throttled; then
+                send_message "MAC cadastrado com sucesso."
+                log_action "MAC $MAC ($NAME - $IP) cadastrado com sucesso"
+            else
+                send_message "MAC cadastrado (uci). dnsmasq em cooldown; em breve: /etc/init.d/dnsmasq restart"
+                log_action "MAC $MAC ($NAME - $IP) uci ok; dnsmasq em cooldown"
+            fi
+
+            rm -f "$STATE_FILE"
+        ;;
+    esac
+}
+
+handle_command() {
+    _text="$1"
+
+    case "$_text" in
+        "/status")
+            process_status
+        ;;
+        "/adiciona_mac")
+            echo "STEP=WAIT_MAC" > "$STATE_FILE"
+            send_message "Informe o MAC (ou /cancelar)"
+        ;;
+        "/cancelar")
+            cancel_flow
+        ;;
+        "/help"|"/ajuda"|"/start")
+            send_message "Comandos: /status /adiciona_mac /cancelar /help"
+        ;;
+        *)
+            process_flow "$_text"
+        ;;
+    esac
+}
+
+process_updates() {
+    RESPONSE=$(get_updates) || RESPONSE=""
+
+    OK=$(echo "$RESPONSE" | jsonfilter -e '@.ok' 2>/dev/null)
+    if [ "$OK" != "true" ]; then
+        monitor_log "telegram getUpdates: resposta nao-ok ou vazia"
+        sleep 5
+        return
+    fi
+
+    i=0
+    LAST_SEEN=""
+
+    while [ "$i" -lt 64 ]; do
+        UPDATE_ID=$(echo "$RESPONSE" | jsonfilter -e "@.result[$i].update_id" 2>/dev/null)
+        [ -z "$UPDATE_ID" ] && break
+
+        LAST_SEEN=$UPDATE_ID
+
+        CHAT=$(echo "$RESPONSE" | jsonfilter -e "@.result[$i].message.chat.id" 2>/dev/null)
+        SENDER=$(echo "$RESPONSE" | jsonfilter -e "@.result[$i].message.from.id" 2>/dev/null)
+        TEXT=$(echo "$RESPONSE" | jsonfilter -e "@.result[$i].message.text" 2>/dev/null)
+
+        if [ "$CHAT" != "$TELEGRAM_CHAT_ID" ] || [ "$SENDER" != "$TELEGRAM_USER_ID" ]; then
+            i=$((i + 1))
+            continue
+        fi
+
+        if [ -n "$TEXT" ]; then
+            handle_command "$TEXT"
+        fi
+
+        i=$((i + 1))
+    done
+
+    if [ -n "$LAST_SEEN" ]; then
+        echo "$LAST_SEEN" > "${STATE_DIR}/telegram_last_update"
+    fi
+}
+
+while true; do
+    process_updates
+    sleep 2
+done

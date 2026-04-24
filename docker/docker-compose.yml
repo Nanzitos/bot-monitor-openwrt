@@ -1,0 +1,21 @@
+# Teste local do pacote monitor com rootfs OpenWrt em Docker (no PC).
+#
+# Uso (na raiz do repositório):
+#   docker compose -f docker/docker-compose.yml build
+#   docker compose -f docker/docker-compose.yml run --rm openwrt-monitor-test
+#
+# Em Apple Silicon, força amd64 (imagem x86_64 OpenWrt).
+
+services:
+  openwrt-monitor-test:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        # Substitui se a tag predefinida falhar (ver docker/README.md)
+        OPENWRT_IMAGE: ghcr.io/openwrt/rootfs:x86_64-main
+    image: openwrt-monitor-test:local
+    stdin_open: true
+    tty: true
+    command: /bin/sh
