@@ -1,0 +1,82 @@
+# Compila o .ipk do pacote "monitor" com o SDK OpenWrt oficial (cross-compile).
+# Isto NÃO usa openwrt/rootfs — usa Ubuntu + tarball SDK (ex.: mediatek/filogic).
+#
+# Build (na raiz do repo):
+#   docker compose -f docker/docker-compose.ipk.yml build
+#   docker compose -f docker/docker-compose.ipk.yml run --rm monitor-ipk
+#
+# Requer: plataforma linux/amd64 (SDK é Linux-x86_64).
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Pré-requisitos alinhados à wiki OpenWrt (SDK / Ubuntu)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential clang flex bison g++ gawk gcc gettext git \
+    libncurses5-dev libssl-dev python3 rsync unzip wget zlib1g-dev \
+    file zstd ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# SDK OpenWrt 24.10.5 para mediatek/filogic (Cudy WR3000 v1, etc.)
+# Override: --build-arg SDK_URL=https://...outro-sdk...tar.zst
+ARG SDK_URL=https://downloads.openwrt.org/releases/24.10.5/targets/mediatek/filogic/openwrt-sdk-24.10.5-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+
+WORKDIR /work
+RUN wget -q "$SDK_URL" -O /tmp/sdk.tar.zst \
+    && tar -I zstd -xf /tmp/sdk.tar.zst -C /work \
+    && rm /tmp/sdk.tar.zst \
+    && SDK=$(ls -d /work/openwrt-sdk-* | head -n1) \
+    && mv "$SDK" /work/sdk
+
+WORKDIR /work/sdk
+
+# Contexto de build = raiz do repositório (Makefile + files/)
+COPY Makefile package/monitor/
+COPY files package/monitor/files
+
+RUN git config --global user.email "docker@build.local" \
+    && git config --global user.name "Docker Build"
+
+# Clones grandes via git.openwrt.org falham muito com GnuTLS no Docker; GitHub costuma ser mais estável.
+RUN set -e; \
+    if [ -f feeds.conf.default ]; then \
+      sed -i \
+        -e 's|https://git.openwrt.org/openwrt/openwrt.git|https://github.com/openwrt/openwrt.git|g' \
+        -e 's|https://git.openwrt.org/feed/|https://github.com/openwrt/|g' \
+        -e 's|https://git.openwrt.org/project/luci.git|https://github.com/openwrt/luci.git|g' \
+        feeds.conf.default; \
+    fi
+
+# Reduz cortes TLS em clones grandes
+RUN git config --global http.postBuffer 524288000 \
+    && git config --global http.lowSpeedLimit 1000 \
+    && git config --global http.lowSpeedTime 600 \
+    && git config --global core.compression 0 \
+    && git config --global fetch.parallel 1
+
+# -j1: pacote só scripts; -jN puxava compilação pesada de deps (curl/mbedtls) em paralelo e falhava no Docker.
+RUN set -e; \
+    n=0; \
+    until ./scripts/feeds update -a; do \
+      n=$((n+1)); \
+      if [ "$n" -ge 5 ]; then \
+        echo "feeds update falhou após 5 tentativas"; \
+        exit 1; \
+      fi; \
+      echo "feeds update falhou, nova tentativa $n/5 em 30s..."; \
+      rm -rf feeds/base feeds/packages feeds/luci feeds/routing feeds/telephony feeds/tmp 2>/dev/null || true; \
+      sleep 30; \
+    done; \
+    test -d feeds/base || (echo "feeds/base em falta após update" && exit 1); \
+    make defconfig; \
+    make package/monitor/clean 2>/dev/null || true; \
+    make package/monitor/compile V=s -j1
+
+RUN IPK=$(find /work/sdk/bin/packages -name 'monitor_*.ipk' | head -n1) \
+    && test -n "$IPK" \
+    && cp -a "$IPK" /work/monitor.ipk \
+    && ls -la /work/monitor.ipk
+
+# Imagem final: só o .ipk em /export default (compose copia daqui)
+WORKDIR /work

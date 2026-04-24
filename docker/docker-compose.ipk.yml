@@ -1,0 +1,29 @@
+# Gera o .ipk dentro do Docker (Ubuntu + SDK OpenWrt).
+#
+# Na raiz do repositório:
+#   mkdir -p ipk-out
+#   docker compose -f docker/docker-compose.ipk.yml build
+#   docker compose -f docker/docker-compose.ipk.yml run --rm monitor-ipk
+#
+# Resultado: ./ipk-out/monitor.ipk (cópia do artefacto gerado no build)
+
+services:
+  monitor-ipk:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.sdk
+      args:
+        SDK_URL: https://downloads.openwrt.org/releases/24.10.5/targets/mediatek/filogic/openwrt-sdk-24.10.5-mediatek-filogic_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+    image: monitor-ipk-builder:local
+    volumes:
+      - ../ipk-out:/export
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        test -f /work/monitor.ipk
+        cp -a /work/monitor.ipk /export/
+        ls -la /export/monitor.ipk
+        echo "OK: ipk-out/monitor.ipk no repositório (pasta ao lado de docker/)"

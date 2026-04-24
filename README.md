@@ -41,7 +41,7 @@ No roteador, em tempo de execução, também entram em uso diretórios como `/tm
 1. Copie este diretório para a árvore de pacotes do SDK ou buildroot OpenWrt (por exemplo `package/monitor/`), mantendo `Makefile` e `files/` como estão.
 2. No diretório raiz do build OpenWrt, compile o pacote, por exemplo:
    - `make package/monitor/compile V=s`
-3. Instale o `.ipk` gerado no roteador (`opkg install monitor_*.ipk`).
+3. Instale o `.ipk` gerado no roteador (`opkg install monitor_*.ipk`). Garanta **`curl`** e **`jsonfilter`** (`opkg install curl jsonfilter`) — não vêm como dependência automática do pacote.
 
 ---
 

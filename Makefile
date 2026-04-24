@@ -10,16 +10,31 @@ define Package/monitor
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=OpenWrt Monitor (Telegram)
-  DEPENDS:=+curl +jsonfilter
+  # Sem DEPENDS aqui: no SDK evita compilar toda a árvore do curl/mbedtls em paralelo
+  # (falhas comuns: OOM / -jN / Docker). No router: opkg install curl jsonfilter antes ou a seguir.
 endef
 
 define Package/monitor/description
- Monitoramento de rede e automação via Telegram
+ Monitoramento de rede e automação via Telegram.
+ Requer no dispositivo: curl e jsonfilter (opkg install curl jsonfilter).
 endef
 
 define Package/monitor/conffiles
 /etc/monitor/config.env
 /etc/monitor/mac_allowlist
+endef
+
+# Pacote só instala scripts (evita autotools / make no build_dir)
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+endef
+
+define Build/Configure
+	true
+endef
+
+define Build/Compile
+	true
 endef
 
 define Package/monitor/install
