@@ -73,9 +73,19 @@ RUN set -e; \
     make package/monitor/clean 2>/dev/null || true; \
     make package/monitor/compile V=s -j1
 
-RUN IPK=$(find /work/sdk/bin/packages -name 'monitor_*.ipk' | head -n1) \
+# OpenWrt .ipk must be an ar archive (like .deb). opkg rejects a gzip/tar of the same members as "Malformed".
+RUN IPK=$(find /work/sdk/bin/packages -name 'monitor_*.ipk' -type f | head -n1) \
     && test -n "$IPK" \
     && cp -a "$IPK" /work/monitor.ipk \
+    && ( ar t /work/monitor.ipk >/dev/null 2>&1 || ( \
+         echo "ipk is not ar format, repacking for opkg..."; \
+         D=$(mktemp -d); \
+         tar -xzf /work/monitor.ipk -C "$D"; \
+         ( cd "$D" && ar r /work/monitor-repacked.ipk debian-binary control.tar.gz data.tar.gz ); \
+         mv /work/monitor-repacked.ipk /work/monitor.ipk; \
+         rm -rf "$D"; \
+       ) ) \
+    && ar t /work/monitor.ipk \
     && ls -la /work/monitor.ipk
 
 # Imagem final: só o .ipk em /export default (compose copia daqui)
