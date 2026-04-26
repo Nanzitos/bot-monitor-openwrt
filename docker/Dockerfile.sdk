@@ -34,6 +34,7 @@ WORKDIR /work/sdk
 # Contexto de build = raiz do repositório (Makefile + files/)
 COPY Makefile package/monitor/
 COPY files package/monitor/files
+COPY docker/repack-ipk-opkg-compat.sh /work/repack-ipk-opkg-compat.sh
 
 RUN git config --global user.email "docker@build.local" \
     && git config --global user.name "Docker Build"
@@ -73,11 +74,12 @@ RUN set -e; \
     make package/monitor/clean 2>/dev/null || true; \
     make package/monitor/compile V=s -j1
 
-# OpenWrt .ipk = gzip(compressed tar of debian-binary + data.tar.gz + control.tar.gz), see scripts/ipkg-build.
-# opkg's deb_extract pipes the file through gzip -d and reads an outer tar (not GNU ar). Debian-style ar .ipk fails install.
+# OpenWrt .ipk = gzip(tar(debian-binary, data.tar.gz, control.tar.gz)); opkg não usa ar por fora.
+# O SDK gera control/data com GNU tar (--format=gnu), que pode emitir typeflag PAX 'x'; o extrator do opkg não suporta.
 RUN IPK=$(find /work/sdk/bin/packages -name 'monitor_*.ipk' -type f | head -n1) \
     && test -n "$IPK" \
     && cp -a "$IPK" /work/monitor.ipk \
+    && sh /work/repack-ipk-opkg-compat.sh /work/monitor.ipk \
     && gzip -t /work/monitor.ipk \
     && gzip -dc /work/monitor.ipk | tar -tf - | grep -q 'control\.tar\.gz' \
     && ls -la /work/monitor.ipk
