@@ -8,9 +8,13 @@ Repositório **Monitor**: monitoramento de rede e automação no roteador via **
 
 O `Makefile` e a pasta `files/` ficam na **raiz** do projeto (árvore típica de pacote OpenWrt):
 
+Documentação operacional: **[docs/servicos-e-logs.md](docs/servicos-e-logs.md)** (serviços, ficheiros de log, limpeza manual e cron às 14h).
+
 ```
 .
 ├── Makefile
+├── docs/
+│   └── servicos-e-logs.md
 └── files/
     ├── etc/
     │   ├── init.d/
@@ -21,7 +25,8 @@ O `Makefile` e a pasta `files/` ficam na **raiz** do projeto (árvore típica de
     ├── usr/
     │   ├── bin/
     │   │   ├── network-monitor
-    │   │   └── monitor-bot
+    │   │   ├── monitor-bot
+    │   │   └── monitor-clear-logs
     │   └── lib/
     │       └── monitor/
     │           ├── configs.sh
