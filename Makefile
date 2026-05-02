@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=monitor
 PKG_VERSION:=1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -31,6 +31,20 @@ mkdir -p /etc/crontabs
 touch /etc/crontabs/root
 grep -qF '/usr/bin/monitor-clear-logs' /etc/crontabs/root 2>/dev/null || \
 	echo "0 14 * * * /usr/bin/monitor-clear-logs" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network tick' /etc/crontabs/root 2>/dev/null || \
+	echo "*/5 * * * * /usr/bin/monitor-network tick" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network ssh' /etc/crontabs/root 2>/dev/null || \
+	echo "*/10 * * * * /usr/bin/monitor-network ssh" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network scan' /etc/crontabs/root 2>/dev/null || \
+	echo "0 */2 * * * /usr/bin/monitor-network scan" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network daily' /etc/crontabs/root 2>/dev/null || \
+	echo "0 8 * * * /usr/bin/monitor-network daily" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network ddos' /etc/crontabs/root 2>/dev/null || \
+	echo "*/15 * * * * /usr/bin/monitor-network ddos" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network portscan' /etc/crontabs/root 2>/dev/null || \
+	echo "*/15 * * * * /usr/bin/monitor-network portscan" >> /etc/crontabs/root
+grep -qF '/usr/bin/monitor-network speed' /etc/crontabs/root 2>/dev/null || \
+	echo "*/30 * * * * /usr/bin/monitor-network speed" >> /etc/crontabs/root
 [ -x /etc/init.d/cron ] && /etc/init.d/cron reload 2>/dev/null || true
 exit 0
 endef
@@ -39,7 +53,7 @@ define Package/monitor/prerm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 [ -f /etc/crontabs/root ] || exit 0
-grep -v '/usr/bin/monitor-clear-logs' /etc/crontabs/root > /tmp/monitor-cron.tmp 2>/dev/null && \
+grep -v -e '/usr/bin/monitor-clear-logs' -e '/usr/bin/monitor-network' /etc/crontabs/root > /tmp/monitor-cron.tmp 2>/dev/null && \
 	mv /tmp/monitor-cron.tmp /etc/crontabs/root
 [ -x /etc/init.d/cron ] && /etc/init.d/cron reload 2>/dev/null || true
 exit 0
@@ -64,7 +78,8 @@ define Package/monitor/install
 	$(INSTALL_DATA) ./files/etc/monitor/mac_allowlist $(1)/etc/monitor/
 
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/usr/bin/network-monitor $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/bin/monitor-network $(1)/usr/bin/
+	ln -sf monitor-network $(1)/usr/bin/network-monitor
 	$(INSTALL_BIN) ./files/usr/bin/monitor-bot $(1)/usr/bin/
 	$(INSTALL_BIN) ./files/usr/bin/monitor-clear-logs $(1)/usr/bin/
 

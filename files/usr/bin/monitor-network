@@ -1,0 +1,59 @@
+#!/bin/sh
+# monitor-network — checagens de rede (cron e/ou Telegram).
+# Modulos: /usr/lib/monitor/checks.sh
+
+. /usr/lib/monitor/configs.sh || exit 1
+. /usr/lib/monitor/utils.sh
+. /usr/lib/monitor/telegram.sh
+. /usr/lib/monitor/checks.sh
+
+MODE="${1:-tick}"
+
+case "$MODE" in
+    tick)
+        checks_tick
+    ;;
+    ssh)
+        checks_ssh_only
+    ;;
+    scan)
+        checks_scan_only
+    ;;
+    daily)
+        checks_daily_only
+    ;;
+    ddos)
+        checks_ddos_only
+    ;;
+    portscan)
+        checks_portscan_only
+    ;;
+    speed)
+        CHECK_SPEED_QUIET=1
+        export CHECK_SPEED_QUIET
+        checks_speed_only
+    ;;
+    speed-notify)
+        unset CHECK_SPEED_QUIET
+        checks_speed_only
+    ;;
+    all)
+        checks_all
+    ;;
+    help|-h|--help)
+        echo "Uso: $0 tick|ssh|scan|daily|ddos|portscan|speed|speed-notify|all"
+        echo "  tick        WAN, failover, IP público (wan/wan2), MAC allowlist (cada 5 min recomendado)"
+        echo "  ssh         Falhas SSH em logread (10 min)"
+        echo "  scan        MONITOR_DROP no ultimo minuto (2 h)"
+        echo "  daily       Relatorio diario (cron 08:00)"
+        echo "  ddos        Heuristica conntrack por IP (15 min)"
+        echo "  portscan    Pico DPT em MONITOR_DROP (15 min)"
+        echo "  speed       Velocidade RX/TX no log local (30 min; sem Telegram)"
+        echo "  speed-notify  Velocidade com alerta Telegram"
+        echo "  all         Todos os modulos (Telegram / manual)"
+    ;;
+    *)
+        echo "$0: comando desconhecido: $MODE (tente $0 help)" >&2
+        exit 1
+    ;;
+esac

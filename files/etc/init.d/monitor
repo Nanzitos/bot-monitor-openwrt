@@ -3,11 +3,9 @@
 START=99
 
 start() {
-    /usr/bin/network-monitor &
     /usr/bin/monitor-bot &
 }
 
 stop() {
-    killall network-monitor
-    killall monitor-bot
+    killall monitor-bot 2>/dev/null || true
 }

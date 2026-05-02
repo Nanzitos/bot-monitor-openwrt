@@ -6,9 +6,9 @@ Este documento descreve o que o pacote **monitor** arranca no OpenWrt, onde escr
 
 | Componente | Ficheiro | Função |
 |--------------|----------|--------|
-| **Init** | `/etc/init.d/monitor` | `start`: lança em segundo plano o `network-monitor` e o `monitor-bot`. `stop`: envia sinal a esses processos (`killall`). Ordem de arranque: `START=99`. |
-| **Monitor de rede** | `/usr/bin/network-monitor` | Lê estado WAN/WAN2, failover, IP público (ipify), vizinhos ARP vs allowlist, padrões em `logread` (SSH, `MONITOR_DROP`), relatório diário; envia alertas via Telegram (HTML). |
-| **Bot Telegram** | `/usr/bin/monitor-bot` | Long polling na API do Telegram, comandos (`/status`, `/adiciona_mac`, etc.) e fluxo de cadastro de MAC. |
+| **Init** | `/etc/init.d/monitor` | `start`: lança em segundo plano o **`monitor-bot`**. `stop`: `killall monitor-bot`. Ordem: `START=99`. |
+| **Monitor de rede** | `/usr/bin/monitor-network` | Checagens de rede (módulos em `/usr/lib/monitor/checks.sh`). Em geral invocado pelo **cron**; também manual ou via Telegram (`/checks`, etc.). O nome `network-monitor` permanece como **symlink** para compatibilidade. |
+| **Bot Telegram** | `/usr/bin/monitor-bot` | Long polling na API do Telegram, comandos (`/status`, `/checks`, `/check_rede`, `/check_ssh`, `/check_scan`, `/check_ddos`, `/check_portas`, `/check_velocidade`, `/adiciona_mac`, …) e fluxo de cadastro de MAC. |
 
 Dependências em runtime (não vêm como dependência forçada do `.ipk`): **`curl`**, **`jsonfilter`**.
 
@@ -16,7 +16,7 @@ Comandos úteis no router:
 
 ```sh
 /etc/init.d/monitor status   # se o init script suportar; caso contrário use ps
-ps | grep -E 'network-monitor|monitor-bot' | grep -v grep
+ps | grep -E 'monitor-network|monitor-bot' | grep -v grep
 /etc/init.d/monitor restart
 ```
 
@@ -40,18 +40,25 @@ Todos sob **`LOG_DIR`** (por defeito **`/var/log/monitor`**, configurável em `/
 
 O comando **remove** cada um dos três ficheiros e **volta a criá-los vazios** com `touch` (equivalente a log novo). Respeita `LOG_DIR` definido em `config.env` quando aplicável.
 
-## Limpeza automática (todos os dias às 14:00)
+## Crontab (limpeza de logs e `monitor-network`)
 
-Na **instalação ou atualização** do pacote (`opkg install` / `opkg upgrade`), o script **`postinst`** regista uma linha no crontab do **root**:
+Na **instalação ou atualização** do pacote (`opkg install` / `opkg upgrade`), o **`postinst`** acrescenta linhas em **`/etc/crontabs/root`** (cada uma só se ainda não existir o mesmo comando):
 
-```text
-0 14 * * * /usr/bin/monitor-clear-logs
-```
+| Agendamento | Comando |
+|-------------|---------|
+| Diário 14:00 | `/usr/bin/monitor-clear-logs` |
+| A cada 5 min | `/usr/bin/monitor-network tick` (WAN, failover, IP público wan/wan2, MAC) |
+| A cada 10 min | `/usr/bin/monitor-network ssh` (falhas SSH em `logread`) |
+| A cada 2 h (minuto 0) | `/usr/bin/monitor-network scan` (`MONITOR_DROP` no último minuto) |
+| Diário 08:00 | `/usr/bin/monitor-network daily` (relatório) |
+| A cada 15 min | `/usr/bin/monitor-network ddos` (heurística `nf_conntrack`, se existir) |
+| A cada 15 min | `/usr/bin/monitor-network portscan` (pico de porta em `MONITOR_DROP`) |
+| A cada 30 min | `/usr/bin/monitor-network speed` (velocidade RX/TX no **log local**; sem alerta Telegram) |
 
 Requisitos:
 
 1. Serviço **`cron`** ativo (`/etc/init.d/cron enable` e `start`), típico em OpenWrt com **BusyBox crond**.
-2. Ficheiro **`/etc/crontabs/root`** — o `postinst` só acrescenta a linha se ainda não existir uma referência a `monitor-clear-logs`.
+2. Ficheiro **`/etc/crontabs/root`**.
 
 Após instalar, se o cron já estiver a correr:
 
@@ -59,13 +66,13 @@ Após instalar, se o cron já estiver a correr:
 /etc/init.d/cron reload
 ```
 
-Na **desinstalação** (`opkg remove monitor`), o **`prerm`** remove essa linha do crontab do root (outras linhas mantêm-se).
+Na **desinstalação** (`opkg remove monitor`), o **`prerm`** remove as linhas que referem `monitor-clear-logs` e **`/usr/bin/monitor-network`** (outras entradas do crontab mantêm-se).
 
 ## Desinstalação / remoção manual da entrada cron
 
 Se removeres o pacote com `opkg remove monitor`, o `prerm` trata do cron. Para remover só a linha à mão:
 
 ```sh
-grep -v monitor-clear-logs /etc/crontabs/root > /tmp/root.cron && mv /tmp/root.cron /etc/crontabs/root
+grep -v -e monitor-clear-logs -e '/usr/bin/monitor-network' /etc/crontabs/root > /tmp/root.cron && mv /tmp/root.cron /etc/crontabs/root
 /etc/init.d/cron reload
 ```

@@ -1,6 +1,5 @@
 #!/bin/sh
-
-# TODO: Check if necessary unify with network-monitor, maybe create a single monitor.sh with modules or something like that, to avoid code duplication and make it more maintainable.
+# Bot Telegram. Lógica de rede partilhada em /usr/lib/monitor/checks.sh (disparada via /usr/bin/monitor-network).
 
 . /usr/lib/monitor/configs.sh || exit 1
 . /usr/lib/monitor/utils.sh
@@ -163,8 +162,36 @@ handle_command() {
         "/cancelar")
             cancel_flow
         ;;
+        "/checks")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network all >/dev/null 2>&1 &
+            send_message "Ciclo completo (monitor-network all) em background."
+        ;;
+        "/check_rede")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network tick >/dev/null 2>&1 &
+            send_message "Checagem rede (tick) em background."
+        ;;
+        "/check_ssh")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network ssh >/dev/null 2>&1 &
+            send_message "Checagem SSH (log) em background."
+        ;;
+        "/check_scan")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network scan >/dev/null 2>&1 &
+            send_message "Checagem scan interno (MONITOR_DROP) em background."
+        ;;
+        "/check_ddos")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network ddos >/dev/null 2>&1 &
+            send_message "Heuristica conntrack (ddos) em background."
+        ;;
+        "/check_portas")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network portscan >/dev/null 2>&1 &
+            send_message "Pico de porta (MONITOR_DROP) em background."
+        ;;
+        "/check_velocidade")
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network speed-notify >/dev/null 2>&1 &
+            send_message "Medicao de velocidade (Telegram) em background."
+        ;;
         "/help"|"/ajuda"|"/start")
-            send_message "Comandos: /status /adiciona_mac /cancelar /help"
+            send_message "Comandos: /status /adiciona_mac /cancelar /checks /check_rede /check_ssh /check_scan /check_ddos /check_portas /check_velocidade /help"
         ;;
         *)
             process_flow "$_text"

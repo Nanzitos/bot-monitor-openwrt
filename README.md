@@ -24,11 +24,12 @@ Documentação operacional: **[docs/servicos-e-logs.md](docs/servicos-e-logs.md)
     │       └── mac_allowlist
     ├── usr/
     │   ├── bin/
-    │   │   ├── network-monitor
+    │   │   ├── monitor-network
     │   │   ├── monitor-bot
     │   │   └── monitor-clear-logs
     │   └── lib/
     │       └── monitor/
+    │           ├── checks.sh
     │           ├── configs.sh
     │           ├── telegram.sh
     │           └── utils.sh
@@ -63,6 +64,8 @@ Edite `/etc/monitor/config.env` no dispositivo (valores de exemplo no repositór
 | `ALLOWLIST` | Caminho da allowlist MAC |
 | `LOG_DIR` | Diretório de logs |
 | `STATE_DIR` | Estado temporário (ex.: `/tmp/monitor`) |
+| `DDOS_MAX_PER_IP` | (opcional) limiar conntrack por IP; ver `checks.sh` |
+| `PORT_SPIKE_MIN` | (opcional) eventos `MONITOR_DROP` por porta no minuto |
 
 Ajuste `/etc/monitor/mac_allowlist` conforme sua rede.
 
@@ -70,9 +73,9 @@ Ajuste `/etc/monitor/mac_allowlist` conforme sua rede.
 
 ---
 
-## Serviço (init)
+## Serviço (init) e agendamento
 
-O pacote instala `/etc/init.d/monitor`, que sobe `network-monitor` e `monitor-bot` no boot.
+O pacote instala `/etc/init.d/monitor`, que sobe apenas o **`monitor-bot`** no boot. As checagens de rede (`monitor-network`) são disparadas pelo **cron** (intervalos definidos no `postinst`; ver [docs/servicos-e-logs.md](docs/servicos-e-logs.md)). O binário legado **`network-monitor`** é um symlink para `monitor-network`.
 
 ```sh
 /etc/init.d/monitor enable
@@ -119,12 +122,13 @@ mac_allowlist
 /etc/init.d/monitor
 
 /usr/lib/monitor/
+checks.sh
 configs.sh
 telegram.sh
 utils.sh
 
 /usr/bin/
-network-monitor
+monitor-network
 monitor-bot
 
 /var/log/monitor/

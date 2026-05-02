@@ -54,10 +54,10 @@ docker compose -f docker/docker-compose.yml run --rm openwrt-monitor-test
 
 Dentro do contentor:
 
-- Ficheiros do pacote em `/etc/monitor/`, `/usr/bin/network-monitor`, `/usr/bin/monitor-bot`, `/usr/lib/monitor/`.
+- Ficheiros do pacote em `/etc/monitor/`, `/usr/bin/monitor-network`, `/usr/bin/monitor-bot`, `/usr/lib/monitor/` (inclui `checks.sh`).
 - Validação rápida de sintaxe:
   ```sh
-  sh -n /usr/bin/network-monitor && sh -n /usr/bin/monitor-bot && echo OK
+  sh -n /usr/bin/monitor-network && sh -n /usr/lib/monitor/checks.sh && sh -n /usr/bin/monitor-bot && echo OK
   ```
 - Para testar o **bot** de verdade, edita `/etc/monitor/config.env` (token, chat id, user id, `SECRET`) e corre `/usr/bin/monitor-bot` (precisa de **saída HTTPS** para `api.telegram.org`).
 
@@ -77,7 +77,7 @@ Se reconstruíste a imagem **sem** rede no `docker build`, o passo do `Dockerfil
 
 | No contentor | Realidade |
 |--------------|-----------|
-| `ubus`, UCI, interfaces `wan`/`wan2` | Podem não existir ou não refletir um router; `network-monitor` pode falhar ou alertar em partes que dependem de rede real. |
+| `ubus`, UCI, interfaces `wan`/`wan2` | Podem não existir ou não refletir um router; `monitor-network` pode falhar ou alertar em partes que dependem de rede real. |
 | `iw`, WiFi, VLANs `br-lan.*` | Normalmente **não** há rádio; checks WiFi/NAC são no máximo “não rebentam o shell”. |
 | `logread`, firewall `MONITOR_DROP` | Ambiente mínimo; contagens podem ser zero. |
 | Init `procd` completo | Não é igual ao boot no hardware; `/etc/init.d/monitor start` pode não ser representativo. |
