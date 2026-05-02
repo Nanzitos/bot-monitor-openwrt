@@ -1,7 +1,7 @@
 #!/bin/sh
 
 ############################
-# network-monitor v2.2
+# network-monitor v2.2 TODO change name to monitor-network
 # OpenWrt / config.env / libs
 ############################
 
@@ -64,6 +64,7 @@ build_wifi_cache() {
 ############################
 
 check_wan() {
+    TODO: Run Every 5 minutes, create a comando in monitor-bot to trigger manualy if you want
     WAN1=$(ubus call network.interface.wan status | jsonfilter -e '@.up')
     WAN2=$(ubus call network.interface.wan2 status 2>/dev/null | jsonfilter -e '@.up')
 
@@ -87,6 +88,7 @@ check_wan() {
 ############################
 
 check_failover() {
+    #TODO Run Every 5 minutes, create a comando in monitor-bot to trigger manualy if you want
     ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {print $5}')
 
     if [ "$ROUTE" = "wan2" ]; then
@@ -105,6 +107,7 @@ check_failover() {
 ############################
 
 check_public_ip() {
+    #TODO: Run Every 5 minutes and check all wan interface ex: wan, wan2, create a comando in monitor-bot to trigger manualy if you want
     CURRENT_IP=$(curl -sS --connect-timeout 8 --max-time 15 "https://api.ipify.org" 2>/dev/null) || return 0
     [ -z "$CURRENT_IP" ] && return 0
     echo "$CURRENT_IP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || return 0
@@ -130,6 +133,7 @@ Novo: $CURRENT_IP"
 ############################
 
 check_ssh() {
+    #TODO Run Every 10 minutes, create a comando in monitor-bot to trigger manualy if you want
     COUNT=$(echo "$LOG_CACHE" | \
         grep "$CURRENT_HOUR" | \
         grep "Failed password" | wc -l)
@@ -148,6 +152,7 @@ check_ssh() {
 ############################
 
 check_mac() {
+    #TODO: Run every 5 minutes, create a comando in monitor-bot to trigger manualy if you want
     [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
 
     build_wifi_cache
@@ -200,6 +205,7 @@ Estado ARP: $STATE"
 ############################
 
 check_internal_scan() {
+    #TODO Run Every 2hours, create a comando in monitor-bot to trigger manualy if you want
     COUNT=$(echo "$LOG_CACHE" | \
         grep "$CURRENT_MIN" | \
         grep "MONITOR_DROP" | wc -l)
@@ -224,11 +230,16 @@ Principal origem: $ATTACKER"
     fi
 }
 
+# TODO: Create a comand to check if have an ddos attack, maybe check for many connections from same ip in short time, or many connections to same port, etc.
+# TODO: Create a comand to check if have an scan in specific port, maybe check for many connections to same port in short time, etc.
+# TODO: Create a comand to check speed internet in all interfaces wan and wan2.
+
 ############################
 # DAILY REPORT
 ############################
 
 daily_report() {
+    #TODO: Run  everyDay At 08:00, adjust if your setup doesn't run this script in a cron
     HOUR=$(date +"%H")
 
     if [ "$HOUR" = "08" ] && [ ! -f "$DAILY_STATE" ]; then
@@ -257,3 +268,6 @@ check_ssh
 check_mac
 check_internal_scan
 daily_report
+
+
+# TODO Create a cron to run process in your setup time

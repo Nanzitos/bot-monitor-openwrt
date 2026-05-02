@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# TODO: Check if necessary unify with network-monitor, maybe create a single monitor.sh with modules or something like that, to avoid code duplication and make it more maintainable.
+
 . /usr/lib/monitor/configs.sh || exit 1
 . /usr/lib/monitor/utils.sh
 . /usr/lib/monitor/telegram.sh
