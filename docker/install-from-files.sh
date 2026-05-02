@@ -15,7 +15,8 @@ cp -a "$SRC/etc/monitor/mac_allowlist" "$ROOT/etc/monitor/"
 # cp+chmod (BusyBox/OpenWrt rootfs pode não ter o binário `install`)
 cp -a "$SRC/usr/bin/network-monitor" "$ROOT/usr/bin/network-monitor"
 cp -a "$SRC/usr/bin/monitor-bot" "$ROOT/usr/bin/monitor-bot"
-chmod 755 "$ROOT/usr/bin/network-monitor" "$ROOT/usr/bin/monitor-bot"
+cp -a "$SRC/usr/bin/monitor-clear-logs" "$ROOT/usr/bin/monitor-clear-logs"
+chmod 755 "$ROOT/usr/bin/network-monitor" "$ROOT/usr/bin/monitor-bot" "$ROOT/usr/bin/monitor-clear-logs"
 
 for f in "$SRC/usr/lib/monitor"/*.sh; do
     [ -f "$f" ] || continue

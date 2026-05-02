@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=monitor
 PKG_VERSION:=1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -22,6 +22,27 @@ endef
 define Package/monitor/conffiles
 /etc/monitor/config.env
 /etc/monitor/mac_allowlist
+endef
+
+define Package/monitor/postinst
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+mkdir -p /etc/crontabs
+touch /etc/crontabs/root
+grep -qF '/usr/bin/monitor-clear-logs' /etc/crontabs/root 2>/dev/null || \
+	echo "0 14 * * * /usr/bin/monitor-clear-logs" >> /etc/crontabs/root
+[ -x /etc/init.d/cron ] && /etc/init.d/cron reload 2>/dev/null || true
+exit 0
+endef
+
+define Package/monitor/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+[ -f /etc/crontabs/root ] || exit 0
+grep -v '/usr/bin/monitor-clear-logs' /etc/crontabs/root > /tmp/monitor-cron.tmp 2>/dev/null && \
+	mv /tmp/monitor-cron.tmp /etc/crontabs/root
+[ -x /etc/init.d/cron ] && /etc/init.d/cron reload 2>/dev/null || true
+exit 0
 endef
 
 # Pacote só instala scripts (evita autotools / make no build_dir)
@@ -45,6 +66,7 @@ define Package/monitor/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/usr/bin/network-monitor $(1)/usr/bin/
 	$(INSTALL_BIN) ./files/usr/bin/monitor-bot $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/bin/monitor-clear-logs $(1)/usr/bin/
 
 	$(INSTALL_DIR) $(1)/usr/lib/monitor
 	$(INSTALL_DATA) ./files/usr/lib/monitor/* $(1)/usr/lib/monitor/

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Remove e recria os ficheiros de log do monitor (vazios).
+# Uso: monitor-clear-logs  |  cron: 0 14 * * * /usr/bin/monitor-clear-logs
+
+LOG_DIR="/var/log/monitor"
+if [ -f /etc/monitor/config.env ]; then
+	# shellcheck source=/dev/null
+	. /etc/monitor/config.env
+fi
+LOG_DIR="${LOG_DIR:-/var/log/monitor}"
+
+mkdir -p "$LOG_DIR" 2>/dev/null || exit 0
+
+for _f in monitor.log telegram_audit.log telegram_send_errors.log; do
+	_path="$LOG_DIR/$_f"
+	rm -f "$_path" 2>/dev/null || true
+	touch "$_path" 2>/dev/null || true
+done
+
+exit 0
