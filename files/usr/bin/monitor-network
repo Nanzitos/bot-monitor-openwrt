@@ -25,6 +25,9 @@ case "$MODE" in
     ddos)
         checks_ddos_only
     ;;
+    ddos-notify)
+        checks_ddos_notify_only
+    ;;
     portscan)
         checks_portscan_only
     ;;
@@ -35,13 +38,15 @@ case "$MODE" in
     ;;
     speed-notify)
         unset CHECK_SPEED_QUIET
+        export SPEED_SAMPLE_SEC="${SPEED_SAMPLE_NOTIFY_SEC:-15}"
+        export CHECK_SPEED_HTTP=1
         checks_speed_only
     ;;
     all)
         checks_all
     ;;
     help|-h|--help)
-        echo "Uso: $0 tick|ssh|scan|daily|ddos|portscan|speed|speed-notify|all"
+        echo "Uso: $0 tick|ssh|scan|daily|ddos|ddos-notify|portscan|speed|speed-notify|all"
         echo "  tick        WAN, failover, IP público (wan/wan2), MAC allowlist (cada 5 min recomendado)"
         echo "  ssh         Falhas SSH em logread (10 min)"
         echo "  scan        MONITOR_DROP no ultimo minuto (2 h)"

@@ -4,6 +4,7 @@
 . /usr/lib/monitor/configs.sh || exit 1
 . /usr/lib/monitor/utils.sh
 . /usr/lib/monitor/telegram.sh
+. /usr/lib/monitor/checks.sh
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
 
@@ -28,17 +29,87 @@ dnsmasq_restart_throttled() {
 }
 
 process_status() {
-    UPTIME=$(uptime)
+    checks_ensure_state
+    UPTIME=$(uptime | sed 's/^  *//')
     LOAD=$(awk '{print $1,$2,$3}' /proc/loadavg)
     MEM=$(mem_usage_percent)
-    WAN1=$(curl -sS --connect-timeout 8 --max-time 15 --interface wan "https://api.ipify.org" 2>/dev/null || true)
 
-    send_message "STATUS
+    WAN1_UP=$(ubus call network.interface.wan status 2>/dev/null | jsonfilter -e '@.up')
+    WAN2_UP=$(ubus call network.interface.wan2 status 2>/dev/null | jsonfilter -e '@.up')
+    WAN1_ST=$([ "$WAN1_UP" = "true" ] && echo "ligada" || echo "desligada")
+    WAN2_ST=$([ "$WAN2_UP" = "true" ] && echo "ligada" || echo "desligada")
 
+    IP1="—"
+    IP2="—"
+    if [ "$WAN1_UP" = "true" ]; then
+        D1=$(checks_iface_dev wan)
+        if [ -n "$D1" ]; then
+            IP1=$(curl -sS --connect-timeout 8 --max-time 15 --interface "$D1" "https://api.ipify.org" 2>/dev/null || true)
+            [ -z "$IP1" ] && IP1="?"
+        else
+            IP1="?"
+        fi
+    fi
+    if [ "$WAN2_UP" = "true" ]; then
+        D2=$(checks_iface_dev wan2)
+        if [ -n "$D2" ]; then
+            IP2=$(curl -sS --connect-timeout 8 --max-time 15 --interface "$D2" "https://api.ipify.org" 2>/dev/null || true)
+            [ -z "$IP2" ] && IP2="?"
+        else
+            IP2="?"
+        fi
+    fi
+
+    ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}')
+
+    send_message "📊 STATUS DO ROUTER
+
+⏱ Uptime
 $UPTIME
-Load: $LOAD
-RAM uso ~${MEM}%
-WAN1 IP: ${WAN1:-?}"
+
+💻 Load avg: $LOAD
+🧠 RAM uso: ~${MEM}%
+
+🌐 WAN (wan): $WAN1_ST
+   IP público: $IP1
+
+🌐 WAN2 (wan2): $WAN2_ST
+   IP público: $IP2
+
+🔗 Rota até 8.8.8.8: interface ${ROUTE:-?}"
+}
+
+process_nao_autorizados() {
+    checks_ensure_state
+    _f="$STATE_DIR/mac_comando_lista.tmp"
+    checks_collect_unknown_neighbors "$_f"
+    if [ ! -s "$_f" ]; then
+        send_message "✅ Nenhum equipamento fora da mac_allowlist na vizinhança ARP (IPv4) neste momento."
+        rm -f "$_f"
+        return
+    fi
+    _n=$(wc -l < "$_f" | tr -d ' ')
+    _list=$(checks_format_unknown_plain "$_f")
+    rm -f "$_f"
+
+    _head="📋 Fora da allowlist ($_n):
+
+"
+    _all="$_head$_list"
+    _max=4000
+    _tlen=$(printf '%s' "$_all" | wc -c | tr -d ' ')
+    if [ "${_tlen:-0}" -le "$_max" ]; then
+        send_message "$_all"
+        return
+    fi
+    _p1=$(printf '%s' "$_all" | head -c 3950)
+    send_message "$_p1
+
+… (mensagem longa — parte 2 segue)"
+    _p2=$(printf '%s' "$_all" | dd bs=1 skip=3950 2>/dev/null)
+    [ -n "$_p2" ] && send_message "… continuação:
+
+$_p2"
 }
 
 cancel_flow() {
@@ -179,8 +250,8 @@ handle_command() {
             send_message "Checagem scan interno (MONITOR_DROP) em background."
         ;;
         "/check_ddos")
-            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network ddos >/dev/null 2>&1 &
-            send_message "Heuristica conntrack (ddos) em background."
+            [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network ddos-notify >/dev/null 2>&1 &
+            send_message "Diagnostico DDoS/conexoes em background (Telegram)."
         ;;
         "/check_portas")
             [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network portscan >/dev/null 2>&1 &
@@ -188,10 +259,32 @@ handle_command() {
         ;;
         "/check_velocidade")
             [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network speed-notify >/dev/null 2>&1 &
-            send_message "Medicao de velocidade (Telegram) em background."
+            send_message "Medicao (~15s/link + download HTTP por WAN) em background."
+        ;;
+        "/nao_autorizados"|"/macs_bloqueados")
+            process_nao_autorizados
         ;;
         "/help"|"/ajuda"|"/start")
-            send_message "Comandos: /status /adiciona_mac /cancelar /checks /check_rede /check_ssh /check_scan /check_ddos /check_portas /check_velocidade /help"
+            send_message "📋 MONITOR — Ajuda
+
+📊 Estado
+  /status — uptime, load, RAM, IP público WAN + WAN2, rota default
+
+🛡 MAC allowlist
+  /adiciona_mac — cadastrar equipamento
+  /nao_autorizados — listar quem está fora da allowlist (agora)
+  /cancelar — cancelar fluxo
+
+🔧 Checagens (background → alertas Telegram)
+  /checks — todas as checagens de rede
+  /check_rede — WAN, failover, IP, MAC
+  /check_ssh — falhas SSH no log
+  /check_scan — MONITOR_DROP (scan interno)
+  /check_ddos — diagnóstico conexões (conntrack/netstat)
+  /check_portas — pico de porta (MONITOR_DROP)
+  /check_velocidade — tráfego no link + teste HTTP por WAN
+
+ℹ️ /help"
         ;;
         *)
             process_flow "$_text"

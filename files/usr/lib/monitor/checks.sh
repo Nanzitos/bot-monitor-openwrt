@@ -5,6 +5,11 @@
 # Limiares (sobrescrever em config.env se existir)
 DDOS_MAX_PER_IP="${DDOS_MAX_PER_IP:-200}"
 PORT_SPIKE_MIN="${PORT_SPIKE_MIN:-15}"
+# Velocidade: amostra em segundos (interface); download HTTP opcional
+SPEED_SAMPLE_SEC="${SPEED_SAMPLE_SEC:-10}"
+SPEED_SAMPLE_NOTIFY_SEC="${SPEED_SAMPLE_NOTIFY_SEC:-15}"
+SPEED_TEST_URL="${SPEED_TEST_URL:-https://proof.ovh.net/files/10Mb.dat}"
+CHECK_SPEED_HTTP="${CHECK_SPEED_HTTP:-0}"
 
 ############################
 # Cache de log (um ciclo)
@@ -173,14 +178,15 @@ check_ssh() {
 }
 
 ############################
-# NAC / allowlist
+# NAC / allowlist — coleta partilhada
 ############################
 
-check_mac() {
+checks_collect_unknown_neighbors() {
+    _out="$1"
+    checks_ensure_state
     [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
-
     checks_build_wifi_cache
-
+    : > "$_out"
     ip neigh show | while read -r IP _ DEV _ MAC STATE _; do
         echo "$IP" | grep -qE '^[0-9]+\.' || continue
         echo "$MAC" | grep -q ":" || continue
@@ -210,17 +216,51 @@ check_mac() {
         fi
 
         if ! grep -iq "^$MAC$" "$ALLOWLIST"; then
-            checks_log_event "CRITICAL" "Novo dispositivo detectado
-
-IP: $IP
-MAC: $MAC
-Hostname: $HOSTNAME
-VLAN: $VLAN_NAME
-Conexao: $CONNECTION_TYPE
-WiFi Rede: $WIFI_SSID
-Estado ARP: $STATE"
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MAC" "$IP" "$HOSTNAME" "$VLAN_NAME" "$CONNECTION_TYPE" "$WIFI_SSID" "$STATE" >> "$_out"
         fi
     done
+    sort -u -t'	' -k1,1 "$_out" > "${_out}.sort" 2>/dev/null && mv "${_out}.sort" "$_out"
+}
+
+checks_format_unknown_plain() {
+    _file="$1"
+    while IFS='	' read -r MAC IP HOST VLAN CONN WIFI STATE; do
+        [ -z "$MAC" ] && continue
+        echo "• $MAC | $IP | $HOST | VLAN:$VLAN | $CONN | $WIFI | ARP:$STATE"
+    done < "$_file"
+}
+
+checks_escape_html_line() {
+    echo "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+check_mac() {
+    _f="$STATE_DIR/mac_unknown_collect.tmp"
+    checks_collect_unknown_neighbors "$_f"
+    [ ! -s "$_f" ] && return 0
+
+    _n=$(wc -l < "$_f" | tr -d ' ')
+    _body=""
+    while IFS='	' read -r MAC IP HOST VLAN CONN WIFI STATE; do
+        [ -z "$MAC" ] && continue
+        _one=$(printf '%s — IP:%s host:%s VLAN:%s %s WiFi:%s ARP:%s' "$MAC" "$IP" "$HOST" "$VLAN" "$CONN" "$WIFI" "$STATE")
+        _one=$(checks_escape_html_line "$_one")
+        _body="$_body
+
+• $_one"
+    done < "$_f"
+
+    _lim=3200
+    _blen=$(printf '%s' "$_body" | wc -c | tr -d ' ')
+    if [ "${_blen:-0}" -gt "$_lim" ] 2>/dev/null; then
+        _body=$(printf '%s' "$_body" | head -c 3180)
+        _body="$_body
+
+…(truncado — ver /nao_autorizados)"
+    fi
+
+    checks_log_event "CRITICAL" "Dispositivos fora da allowlist ($_n):${_body}"
+    rm -f "$_f"
 }
 
 ############################
@@ -253,44 +293,127 @@ Principal origem: $ATTACKER"
 }
 
 ############################
-# Heurística DDoS: muitas entradas nf_conntrack por IP de origem
+# Heurística DDoS: conntrack (IPv4) ou netstat/ss (TCP ESTABLISHED)
 ############################
 
-check_ddos_light() {
-    [ -r /proc/net/nf_conntrack ] || return 0
-
-    TOP=$(awk '
+checks_ddos_top_ipv4_src_conntrack() {
+    awk '
     BEGIN { max = 0 }
     {
         for (i = 1; i <= NF; i++) {
             if ($i ~ /^src=/) {
                 split($i, a, "=")
-                if (a[2] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
-                    c[a[2]]++
-                    if (c[a[2]] > max) { max = c[a[2]]; top = a[2] }
+                ip = a[2]
+                if (ip ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
+                    c[ip]++
+                    if (c[ip] > max) { max = c[ip]; top = ip }
                 }
             }
         }
     }
     END { if (max > 0) print max " " top }
-    ' /proc/net/nf_conntrack 2>/dev/null)
+    ' /proc/net/nf_conntrack 2>/dev/null
+}
+
+checks_ddos_top_ipv4_src_netstat() {
+    netstat -tn 2>/dev/null | awk '
+    BEGIN { max = 0 }
+    $1 == "tcp" && $NF == "ESTABLISHED" {
+        fa = $5
+        sub(/:[0-9]+$/, "", fa)
+        if (fa ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
+            c[fa]++
+            if (c[fa] > max) { max = c[fa]; top = fa }
+        }
+    }
+    END { if (max > 0) print max " " top }
+    '
+}
+
+checks_ddos_top_ipv4_src_ss() {
+    ss -H -tn state established 2>/dev/null | awk '
+    BEGIN { max = 0 }
+    {
+        fa = $5
+        if (fa ~ /:/) {
+            sub(/:[0-9]+$/, "", fa)
+            gsub(/\[|\]/, "", fa)
+            if (fa ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) {
+                c[fa]++
+                if (c[fa] > max) { max = c[fa]; top = fa }
+            }
+        }
+    }
+    END { if (max > 0) print max " " top }
+    '
+}
+
+check_ddos_light() {
+    TOP=""
+    if [ -r /proc/net/nf_conntrack ]; then
+        TOP=$(checks_ddos_top_ipv4_src_conntrack)
+    fi
+    if [ -z "$TOP" ]; then
+        TOP=$(checks_ddos_top_ipv4_src_netstat)
+    fi
+    if [ -z "$TOP" ]; then
+        TOP=$(checks_ddos_top_ipv4_src_ss)
+    fi
 
     [ -z "$TOP" ] && return 0
+
     MAX_CNT=$(echo "$TOP" | awk '{print $1}')
     TOP_IP=$(echo "$TOP" | awk '{print $2}')
 
     if [ "$MAX_CNT" -gt "$DDOS_MAX_PER_IP" ] 2>/dev/null; then
         if [ ! -f "$DDOS_STATE" ]; then
-            checks_log_event "WARNING" "Possível saturação de conexões (conntrack).
+            checks_log_event "WARNING" "Possível saturação de conexões.
 
-IP com mais entradas: $TOP_IP (~$MAX_CNT). Limiar: $DDOS_MAX_PER_IP.
+IP com mais entradas (IPv4): $TOP_IP (~$MAX_CNT). Limiar: $DDOS_MAX_PER_IP.
 
-Se for falso positivo, aumente DDOS_MAX_PER_IP em config.env."
+Fonte: nf_conntrack ou netstat/ss. Ajuste DDOS_MAX_PER_IP em config.env se for falso positivo."
             touch "$DDOS_STATE"
         fi
     else
         rm -f "$DDOS_STATE"
     fi
+}
+
+# Relatório completo para comando manual (Telegram)
+check_ddos_report() {
+    checks_ensure_state
+    _lines=""
+    if [ -r /proc/net/nf_conntrack ]; then
+        _tot=$(wc -l < /proc/net/nf_conntrack | tr -d ' ')
+        _top=$(checks_ddos_top_ipv4_src_conntrack)
+        _lines="$_lines
+• nf_conntrack: $_tot linhas; pico IPv4 src: ${_top:-n/d}"
+    else
+        _lines="$_lines
+• nf_conntrack: indisponível (router sem /proc/net/nf_conntrack — instale kmod nf_conntrack se quiser esta métrica)"
+    fi
+
+    if [ -r /proc/sys/net/netfilter/nf_conntrack_count ]; then
+        _c=$(cat /proc/sys/net/netfilter/nf_conntrack_count)
+        _m=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo "?")
+        _lines="$_lines
+• sysctl conntrack: $_c / max $_m"
+    fi
+
+    _topn=$(checks_ddos_top_ipv4_src_netstat)
+    _lines="$_lines
+• netstat (TCP EST): pico IP remoto IPv4: ${_topn:-n/d}"
+
+    _tops=$(checks_ddos_top_ipv4_src_ss)
+    _lines="$_lines
+• ss (se existir): pico IP: ${_tops:-n/d}"
+
+    _nest=$(netstat -tn 2>/dev/null | awk '$1=="tcp" && $NF=="ESTABLISHED"' | wc -l | tr -d ' ')
+    _lines="$_lines
+• Ligações TCP ESTABLISHED (netstat): ~$_nest"
+
+    _safe=$(checks_escape_html_line "$_lines")
+    checks_log_event "INFO" "Diagnóstico DDoS / conexões:${_safe}"
 }
 
 ############################
@@ -341,8 +464,17 @@ checks_dev_counters() {
     grep -F "${_dev}:" /proc/net/dev 2>/dev/null | head -n1 | awk '{print $2, $10}'
 }
 
+checks_http_download_mbps() {
+    _dev="$1"
+    _url="$2"
+    _bps=$(curl -sS -o /dev/null --max-time 180 --connect-timeout 15 --interface "$_dev" -w '%{speed_download}' "$_url" 2>/dev/null)
+    echo "$_bps" | awk '{ if ($1+0 > 0) printf "%.2f", ($1*8)/1000000; else print "?" }'
+}
+
 check_wan_speed() {
-    _sec=2
+    _sec="${SPEED_SAMPLE_SEC:-10}"
+    _http="${CHECK_SPEED_HTTP:-0}"
+    _url="${SPEED_TEST_URL:-https://proof.ovh.net/files/10Mb.dat}"
     _body=""
     for _u in wan wan2; do
         _up=$(ubus call "network.interface.${_u}" status 2>/dev/null | jsonfilter -e '@.up')
@@ -362,17 +494,26 @@ check_wan_speed() {
         DTX=$((TX2 - TX1))
         [ "$DRX" -lt 0 ] && DRX=0
         [ "$DTX" -lt 0 ] && DTX=0
-        _mbps_rx=$(( DRX * 8 / _sec / 1000000 ))
-        _mbps_tx=$(( DTX * 8 / _sec / 1000000 ))
+        _mbps_rx=$(awk -v b="$DRX" -v s="$_sec" 'BEGIN{ if (s<1) s=1; printf "%.2f", (b*8)/(s*1000000) }')
+        _mbps_tx=$(awk -v b="$DTX" -v s="$_sec" 'BEGIN{ if (s<1) s=1; printf "%.2f", (b*8)/(s*1000000) }')
+
+        _line="$_u ($_dev): tráfego no link ↓${_mbps_rx} / ↑${_mbps_tx} Mbps (média ${_sec}s em /proc/net/dev — tráfego real no cabo/PPP)"
+
+        if [ "$_http" = "1" ]; then
+            _hm=$(checks_http_download_mbps "$_dev" "$_url")
+            _line="$_line
+
+  Teste HTTP (~10 MB, download): ↓ ~${_hm} Mbps (por interface; tráfego real na Internet nesse link)"
+        fi
         _body="$_body
 
-$_u ($_dev): ↓ ~${_mbps_rx} Mbps  ↑ ~${_mbps_tx} Mbps"
+$_line"
     done
     [ -z "$_body" ] && return 0
     if [ "$CHECK_SPEED_QUIET" = "1" ]; then
         monitor_log "speed (amostra ${_sec}s):$_body"
     else
-        checks_log_event "INFO" "Velocidade aproximada (amostra ${_sec}s):${_body}"
+        checks_log_event "INFO" "Velocidade / largura de banda:${_body}"
     fi
 }
 
@@ -432,6 +573,11 @@ checks_ddos_only() {
     checks_ensure_state
     checks_refresh_log_cache
     check_ddos_light
+}
+
+checks_ddos_notify_only() {
+    checks_ensure_state
+    check_ddos_report
 }
 
 checks_portscan_only() {
