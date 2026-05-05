@@ -12,7 +12,8 @@ Documentação operacional: **[docs/servicos-e-logs.md](docs/servicos-e-logs.md)
 
 ```
 .
-├── Makefile
+├── Makefile              # pacote OpenWrt (SDK)
+├── Makefile.ipk          # gera ipk-out/monitor.ipk no PC (Docker + SDK)
 ├── docs/
 │   └── servicos-e-logs.md
 └── files/
@@ -21,16 +22,19 @@ Documentação operacional: **[docs/servicos-e-logs.md](docs/servicos-e-logs.md)
     │   │   └── monitor
     │   └── monitor/
     │       ├── config.env
-    │       └── mac_allowlist
+    │       ├── mac_allowlist
+    │       └── mac_blocklist
     ├── usr/
     │   ├── bin/
     │   │   ├── monitor-network
     │   │   ├── monitor-bot
+    │   │   ├── monitor-apply-mac-acl
     │   │   └── monitor-clear-logs
     │   └── lib/
     │       └── monitor/
     │           ├── checks.sh
     │           ├── configs.sh
+    │           ├── mac_acl.sh
     │           ├── telegram.sh
     │           └── utils.sh
     └── var/
@@ -44,10 +48,22 @@ No roteador, em tempo de execução, também entram em uso diretórios como `/tm
 
 ## Build e instalação
 
+### No SDK OpenWrt (árvore de pacotes)
+
 1. Copie este diretório para a árvore de pacotes do SDK ou buildroot OpenWrt (por exemplo `package/monitor/`), mantendo `Makefile` e `files/` como estão.
 2. No diretório raiz do build OpenWrt, compile o pacote, por exemplo:
    - `make package/monitor/compile V=s`
 3. Instale o `.ipk` gerado no roteador (`opkg install monitor_*.ipk`). Garanta **`curl`** e **`jsonfilter`** (`opkg install curl jsonfilter`) — não vêm como dependência automática do pacote.
+
+### `.ipk` no PC com Docker (repositório só com este pacote)
+
+Na **raiz deste repositório**:
+
+```sh
+make -f Makefile.ipk ipk
+```
+
+(Sem argumentos, o alvo predefinido também é `ipk`.) O ficheiro fica em **`ipk-out/monitor.ipk`**. Requer Docker; o SDK-alvo predefinido está em `docker/docker-compose.ipk.yml` (ajuste `SDK_URL` para o teu router).
 
 ---
 
@@ -61,13 +77,18 @@ Edite `/etc/monitor/config.env` no dispositivo (valores de exemplo no repositór
 | `TELEGRAM_CHAT_ID` | Chat autorizado |
 | `TELEGRAM_USER_ID` | Usuário autorizado |
 | `SECRET` | Confirmação de ações sensíveis |
-| `ALLOWLIST` | Caminho da allowlist MAC |
+| `ALLOWLIST` | Caminho da allowlist MAC (`/etc/monitor/mac_allowlist`) |
+| `BLOCKLIST` | MAC bloqueados por nft (`/etc/monitor/mac_blocklist`) |
+| `MAC_ENFORCE` | `1` = só MAC da allowlist na bridge (nft); `0` = só DROP explícitos da blocklist |
+| `LAN_BRIDGE` | Interface bridge a filtrar (ex.: `br-lan`; ajustar ao teu AP/router) |
 | `LOG_DIR` | Diretório de logs |
 | `STATE_DIR` | Estado temporário (ex.: `/tmp/monitor`) |
 | `DDOS_MAX_PER_IP` | (opcional) limiar conntrack por IP; ver `checks.sh` |
 | `PORT_SPIKE_MIN` | (opcional) eventos `MONITOR_DROP` por porta no minuto |
 
-Ajuste `/etc/monitor/mac_allowlist` conforme sua rede.
+**Allowlist / blocklist:** edita os ficheiros ou usa o Telegram — **`/adiciona_mac`** (só grava na allowlist + reaplica nft; **sem** reserva DHCP estático), **`/bloqueia_mac`** (allowlist → blocklist). O script **`/usr/bin/monitor-apply-mac-acl`** recria regras **nftables** (`bridge monitor_acl`). Exige **`nft`** no sistema.
+
+**Deteção vs bloqueio:** ao detetar MAC fora da allowlist, o monitor envia **alerta HTML** e uma **mensagem** com **`/bloqueio_sim`** ou **`/bloqueio_nao`** (prazo **10 min**, configurável com **`BLOCK_PROMPT_SECS`**). Sem resposta → **bloqueio automático** na blocklist. **`/bloqueio_nao`** grava ignorar este ciclo; **`/bloqueia_mac`** continua disponível para bloqueio manual com senha.
 
 **Firewall / scan interno:** o monitor procura a marca **`MONITOR_DROP`** nos logs. Se antes usavas `SEBASTIANA_DROP`, atualiza as regras iptables/nft para logar `MONITOR_DROP`.
 
@@ -75,7 +96,7 @@ Ajuste `/etc/monitor/mac_allowlist` conforme sua rede.
 
 ## Serviço (init) e agendamento
 
-O pacote instala `/etc/init.d/monitor`, que sobe apenas o **`monitor-bot`** no boot. As checagens de rede (`monitor-network`) são disparadas pelo **cron** (intervalos definidos no `postinst`; ver [docs/servicos-e-logs.md](docs/servicos-e-logs.md)). O binário legado **`network-monitor`** é um symlink para `monitor-network`.
+O pacote instala `/etc/init.d/monitor`. No **`start`**: corre **`monitor-apply-mac-acl`** (regras nft de MAC) e depois o **`monitor-bot`**. As checagens de rede (`monitor-network`) vão pelo **cron** (ver [docs/servicos-e-logs.md](docs/servicos-e-logs.md)). O binário legado **`network-monitor`** é um symlink para `monitor-network`.
 
 ```sh
 /etc/init.d/monitor enable
@@ -118,18 +139,21 @@ O sistema segue esta organização:
 /etc/monitor/
 config.env
 mac_allowlist
+mac_blocklist
 
 /etc/init.d/monitor
 
 /usr/lib/monitor/
 checks.sh
 configs.sh
+mac_acl.sh
 telegram.sh
 utils.sh
 
 /usr/bin/
 monitor-network
 monitor-bot
+monitor-apply-mac-acl
 
 /var/log/monitor/
 

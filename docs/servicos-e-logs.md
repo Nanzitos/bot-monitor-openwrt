@@ -6,11 +6,26 @@ Este documento descreve o que o pacote **monitor** arranca no OpenWrt, onde escr
 
 | Componente | Ficheiro | Função |
 |--------------|----------|--------|
-| **Init** | `/etc/init.d/monitor` | `start`: lança em segundo plano o **`monitor-bot`**. `stop`: `killall monitor-bot`. Ordem: `START=99`. |
-| **Monitor de rede** | `/usr/bin/monitor-network` | Checagens de rede (módulos em `/usr/lib/monitor/checks.sh`). Em geral invocado pelo **cron**; também manual ou via Telegram (`/checks`, etc.). O nome `network-monitor` permanece como **symlink** para compatibilidade. |
-| **Bot Telegram** | `/usr/bin/monitor-bot` | Long polling na API do Telegram, comandos (`/status`, `/checks`, `/check_rede`, `/check_ssh`, `/check_scan`, `/check_ddos`, `/check_portas`, `/check_velocidade`, `/adiciona_mac`, …) e fluxo de cadastro de MAC. |
+| **Init** | `/etc/init.d/monitor` | `start`: corre **`monitor-apply-mac-acl`** (nft MAC) e depois o **`monitor-bot`** em segundo plano. `stop`: `killall monitor-bot`. Ordem: `START=99`. |
+| **ACL MAC (nft)** | `/usr/bin/monitor-apply-mac-acl` | Lê **`/etc/monitor/mac_allowlist`** e **`mac_blocklist`**, recria a tabela **`bridge monitor_acl`** (`/usr/lib/monitor/mac_acl.sh`). Chamado no boot e após `/adiciona_mac` / `/bloqueia_mac`. Requer **`nft`**. |
+| **Monitor de rede** | `/usr/bin/monitor-network` | Checagens de rede (`checks.sh`). Invocado pelo **cron**; também manual ou Telegram (`/checks`, …). **`network-monitor`** = symlink. |
+| **Bot Telegram** | `/usr/bin/monitor-bot` | Comandos: `/status`, `/checks`, checagens `/check_*`, **`/adiciona_mac`** (allowlist + nft, sem DHCP estático), **`/bloqueia_mac`** (blocklist + nft), `/nao_autorizados`, `/cancelar`, … |
 
-Dependências em runtime (não vêm como dependência forçada do `.ipk`): **`curl`**, **`jsonfilter`**.
+Dependências em runtime (não vêm como dependência forçada do `.ipk`): **`curl`**, **`jsonfilter`**. Para ACL MAC: **`nft`** (nftables).
+
+## MAC allowlist, blocklist e deteção
+
+| Ficheiro | Conteúdo |
+|----------|----------|
+| `/etc/monitor/mac_allowlist` | MAC autorizados (uma linha por MAC). |
+| `/etc/monitor/mac_blocklist` | MAC com **DROP** em nft na bridge (ver `LAN_BRIDGE` / `MAC_ENFORCE` em `config.env`). |
+
+- **`/adiciona_mac`**: adiciona à allowlist (com **SECRET**); remove o MAC da blocklist se lá estiver; **não** cria entrada DHCP/UCI.
+- **`/bloqueia_mac`**: remove da allowlist e acrescenta à blocklist (com **SECRET**).
+
+**Fluxo ao detetar MAC desconhecido:** alerta no Telegram + mensagem com **`/bloqueio_sim <mac>`** ou **`/bloqueio_nao <mac>`**. Prazo **10 min** (`BLOCK_PROMPT_SECS` em `config.env`); **sem resposta** → MAC vai para **`mac_blocklist`** e nft é reaplicado. **`/bloqueio_nao`** evita o bloqueio automático **neste ciclo** (ficheiro em `STATE_DIR/block_prompt_ignore`). **`/bloqueia_mac`** mantém bloqueio manual com senha.
+
+Para gerar o `.ipk` só com este pacote no PC (Docker): na raiz do repo, **`make -f Makefile.ipk ipk`** → `ipk-out/monitor.ipk`.
 
 Comandos úteis no router:
 

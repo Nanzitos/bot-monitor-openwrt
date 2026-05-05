@@ -1,14 +1,20 @@
 # Gera ipk-out/monitor.ipk via Docker (Ubuntu + SDK OpenWrt).
-# Executar na raiz do repositório:
+# Na raiz do repositório:
+#   make -f Makefile.ipk ipk
+# ou simplesmente (alvo predefinido):
 #   make -f Makefile.ipk
 #
-# Exige Docker. O SDK predefinido é mediatek/filogic (ajuste SDK_URL em docker/docker-compose.ipk.yml).
+# Exige Docker. SDK predefinido: mediatek/filogic (SDK_URL em docker/docker-compose.ipk.yml).
 
-.PHONY: ipk help
+.PHONY: ipk help default
+
+# Primeiro alvo = predefinido ao correr make -f Makefile.ipk sem argumentos
+default: ipk
 
 help:
-	@echo "Alvo principal:"
-	@echo "  make -f Makefile.ipk      copia monitor.ipk para ./ipk-out/"
+	@echo "Gerar o pacote:"
+	@echo "  make -f Makefile.ipk ipk"
+	@echo "  make -f Makefile.ipk       # igual (alvo predefinido: ipk)"
 	@echo ""
 	@echo "Equivalente manual:"
 	@echo "  mkdir -p ipk-out && docker compose -f docker/docker-compose.ipk.yml build \\"

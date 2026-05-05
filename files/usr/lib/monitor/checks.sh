@@ -5,6 +5,8 @@
 # Limiares (sobrescrever em config.env se existir)
 DDOS_MAX_PER_IP="${DDOS_MAX_PER_IP:-200}"
 PORT_SPIKE_MIN="${PORT_SPIKE_MIN:-15}"
+# Prazo (segundos) para responder /bloqueio_sim|nao antes do bloqueio automático
+BLOCK_PROMPT_SECS="${BLOCK_PROMPT_SECS:-600}"
 # Velocidade: amostra em segundos (interface); download HTTP opcional
 SPEED_SAMPLE_SEC="${SPEED_SAMPLE_SEC:-10}"
 SPEED_SAMPLE_NOTIFY_SEC="${SPEED_SAMPLE_NOTIFY_SEC:-15}"
@@ -37,6 +39,7 @@ checks_ensure_state() {
     WIFI_CACHE="$STATE_DIR/wifi_stations.cache"
     DDOS_STATE="$STATE_DIR/ddos_alert"
     PORTSPIKE_STATE="$STATE_DIR/port_spike_alert"
+    mkdir -p "$STATE_DIR/block_prompt" "$STATE_DIR/block_prompt_ignore" 2>/dev/null || true
 }
 
 ############################
@@ -240,10 +243,49 @@ checks_escape_html_line() {
     echo "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
 }
 
+# Nome de ficheiro seguro a partir do MAC (aa:bb:... -> aa_bb_...)
+checks_mac_to_slug() {
+    echo "$1" | tr ':' '_'
+}
+
+# Para cada MAC novo: cria pedido pendente e envia Telegram (texto simples).
+checks_block_prompt_schedule_from_collect() {
+    _collect="$1"
+    checks_ensure_state
+    _pd="$STATE_DIR/block_prompt"
+    _ign="$STATE_DIR/block_prompt_ignore"
+    mkdir -p "$_pd" "$_ign"
+    _mins=$(( BLOCK_PROMPT_SECS / 60 ))
+    [ "$_mins" -lt 1 ] && _mins=1
+
+    _new=""
+    while IFS='	' read -r MAC _r; do
+        [ -z "$MAC" ] && continue
+        _slug=$(checks_mac_to_slug "$MAC")
+        [ -f "$_pd/$_slug" ] && continue
+        [ -f "$_ign/$_slug" ] && continue
+        echo "ASKED_AT=$(date +%s)
+STATUS=pending" > "$_pd/$_slug"
+        _new="$_new
+• $MAC"
+    done < "$_collect"
+
+    [ -z "$_new" ] && return 0
+
+    send_message "Novo(s) MAC fora da allowlist.
+
+Responder em ${_mins} min (senão vai para a blocklist automaticamente):${_new}
+
+/bloqueio_sim aa:bb:cc:dd:ee:ff
+/bloqueio_nao aa:bb:cc:dd:ee:ff"
+}
+
 check_mac() {
     _f="$STATE_DIR/mac_unknown_collect.tmp"
     checks_collect_unknown_neighbors "$_f"
     [ ! -s "$_f" ] && return 0
+
+    checks_block_prompt_schedule_from_collect "$_f"
 
     _n=$(wc -l < "$_f" | tr -d ' ')
     _body=""

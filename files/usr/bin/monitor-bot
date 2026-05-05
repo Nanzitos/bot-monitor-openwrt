@@ -101,6 +101,66 @@ process_nao_autorizados() {
 $_p2"
 }
 
+# Prazo /bloqueio_sim|nao → bloqueio automático (ficheiros em block_prompt/)
+process_block_prompt_deadlines() {
+    checks_ensure_state
+    _pd="$STATE_DIR/block_prompt"
+    _lim="${BLOCK_PROMPT_SECS:-600}"
+    [ -d "$_pd" ] || return 0
+    _now=$(date +%s)
+    for _fp in "$_pd"/*; do
+        [ -f "$_fp" ] || continue
+        _slug=$(basename "$_fp")
+        MAC=$(echo "$_slug" | tr '_' ':')
+        . "$_fp"
+        [ "$STATUS" = "pending" ] || continue
+        _elapsed=$((_now - ASKED_AT))
+        [ "$_elapsed" -lt "$_lim" ] && continue
+        [ -f "$BLOCKLIST" ] || touch "$BLOCKLIST"
+        monitor_mac_file_remove_line "$ALLOWLIST" "$MAC"
+        grep -qxF "$MAC" "$BLOCKLIST" 2>/dev/null || echo "$MAC" >> "$BLOCKLIST"
+        rm -f "$_fp"
+        monitor_apply_mac_acl
+        send_message "MAC $MAC bloqueado automaticamente (sem resposta em $((_lim / 60)) min)."
+        log_action "auto-block prazo $MAC"
+    done
+}
+
+process_bloqueio_cmd() {
+    _op="$1"
+    _text="$2"
+    MAC=$(echo "$_text" | awk '{print $2}' | tr 'A-Z' 'a-z')
+    echo "$MAC" | grep -qE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || {
+        send_message "Uso: /bloqueio_sim aa:bb:cc:dd:ee:ff
+ou: /bloqueio_nao aa:bb:cc:dd:ee:ff"
+        return
+    }
+    checks_ensure_state
+    _slug=$(echo "$MAC" | tr ':' '_')
+    _pf="$STATE_DIR/block_prompt/$_slug"
+
+    if [ ! -f "$_pf" ]; then
+        send_message "Nao ha pedido pendente para $MAC (ja tratado ou expirou)."
+        return
+    fi
+
+    if [ "$_op" = "nao" ]; then
+        rm -f "$_pf"
+        : > "$STATE_DIR/block_prompt_ignore/$_slug"
+        send_message "OK — $MAC nao sera bloqueado por este alerta. Se voltar a aparecer, pediremos de novo."
+        log_action "bloqueio_nao $MAC"
+        return
+    fi
+
+    rm -f "$_pf"
+    [ -f "$BLOCKLIST" ] || touch "$BLOCKLIST"
+    monitor_mac_file_remove_line "$ALLOWLIST" "$MAC"
+    grep -qxF "$MAC" "$BLOCKLIST" 2>/dev/null || echo "$MAC" >> "$BLOCKLIST"
+    monitor_apply_mac_acl
+    send_message "MAC $MAC adicionado à blocklist (confirmacao manual)."
+    log_action "bloqueio_sim $MAC"
+}
+
 cancel_flow() {
     rm -f "$STATE_FILE"
     send_message "Operacao cancelada."
@@ -155,6 +215,8 @@ Digite a senha (SECRET):"
             [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
             monitor_mac_file_remove_line "$BLOCKLIST" "$MAC"
             grep -qxF "$MAC" "$ALLOWLIST" 2>/dev/null || echo "$MAC" >> "$ALLOWLIST"
+            rm -f "${STATE_DIR}/block_prompt/$(echo "$MAC" | tr ':' '_')"
+            rm -f "${STATE_DIR}/block_prompt_ignore/$(echo "$MAC" | tr ':' '_')"
 
             monitor_apply_mac_acl
 
@@ -198,6 +260,7 @@ Retira da allowlist se estiver. Digite a senha:"
             [ -f "$BLOCKLIST" ] || touch "$BLOCKLIST"
             monitor_mac_file_remove_line "$ALLOWLIST" "$MAC"
             grep -qxF "$MAC" "$BLOCKLIST" 2>/dev/null || echo "$MAC" >> "$BLOCKLIST"
+            rm -f "${STATE_DIR}/block_prompt/$(echo "$MAC" | tr ':' '_')"
 
             monitor_apply_mac_acl
 
@@ -257,6 +320,12 @@ handle_command() {
         "/nao_autorizados"|"/macs_bloqueados")
             process_nao_autorizados
         ;;
+        /bloqueio_sim*)
+            process_bloqueio_cmd sim "$_text"
+        ;;
+        /bloqueio_nao*)
+            process_bloqueio_cmd nao "$_text"
+        ;;
         "/help"|"/ajuda"|"/start")
             send_message "📋 MONITOR — Ajuda
 
@@ -266,6 +335,7 @@ handle_command() {
 🛡 MAC (allowlist / blocklist + nft)
   /adiciona_mac — autorizar MAC (só ficheiro; sem DHCP estático)
   /bloqueia_mac — bloquear MAC (DROP na bridge se nft OK)
+  Novo MAC detetado: pergunta com /bloqueio_sim ou /bloqueio_nao (10 min → bloqueio auto)
   /nao_autorizados — listar fora da allowlist
   /cancelar — cancelar fluxo
 
@@ -287,6 +357,8 @@ handle_command() {
 }
 
 process_updates() {
+    process_block_prompt_deadlines
+
     RESPONSE=$(get_updates) || RESPONSE=""
 
     OK=$(echo "$RESPONSE" | jsonfilter -e '@.ok' 2>/dev/null)

@@ -1,10 +1,10 @@
 # Pacote OpenWrt (compilação no SDK). Para gerar ipk-out/monitor.ipk no PC com Docker:
-#   make -f Makefile.ipk
+#   make -f Makefile.ipk ipk
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=monitor
 PKG_VERSION:=1.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 include $(INCLUDE_DIR)/package.mk
 

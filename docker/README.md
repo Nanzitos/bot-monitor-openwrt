@@ -10,10 +10,10 @@ Usa o fluxo **Ubuntu + SDK oficial** (`docker/Dockerfile.sdk`), por defeito **Op
 
 ```sh
 cd /caminho/para/bot-monitor-openwrt
-mkdir -p ipk-out
-docker compose -f docker/docker-compose.ipk.yml build
-docker compose -f docker/docker-compose.ipk.yml run --rm monitor-ipk
+make -f Makefile.ipk ipk
 ```
+
+(equivalente a `mkdir -p ipk-out`, `docker compose ... build`, `docker compose ... run monitor-ipk`.)
 
 O ficheiro fica em **`ipk-out/monitor.ipk`** (na raiz do repo). Copia para o router e `opkg install /tmp/monitor.ipk`.
 
