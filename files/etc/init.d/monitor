@@ -3,6 +3,7 @@
 START=99
 
 start() {
+    /usr/bin/monitor-apply-mac-acl 2>/dev/null || true
     /usr/bin/monitor-bot &
 }
 

@@ -5,27 +5,16 @@
 . /usr/lib/monitor/utils.sh
 . /usr/lib/monitor/telegram.sh
 . /usr/lib/monitor/checks.sh
+. /usr/lib/monitor/mac_acl.sh
 
 mkdir -p "$STATE_DIR" "$LOG_DIR"
+[ -f "$BLOCKLIST" ] || touch "$BLOCKLIST" 2>/dev/null || true
 
 STATE_FILE="${STATE_DIR}/telegram_flow_state"
 AUDIT_LOG="${LOG_DIR}/telegram_audit.log"
-DNSMASQ_GUARD="${STATE_DIR}/dnsmasq_last_restart"
 
 log_action() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$AUDIT_LOG" 2>/dev/null || true
-}
-
-dnsmasq_restart_throttled() {
-    _now=$(date +%s)
-    _last=$(cat "$DNSMASQ_GUARD" 2>/dev/null || echo 0)
-    if [ "$_last" -gt 0 ] 2>/dev/null && [ $((_now - _last)) -lt 90 ]; then
-        send_message "Reinício do dnsmasq em cooldown (~90s). Tente de novo."
-        return 1
-    fi
-    date +%s > "$DNSMASQ_GUARD"
-    /etc/init.d/dnsmasq restart
-    return 0
 }
 
 process_status() {
@@ -122,12 +111,8 @@ mac_exists() {
     grep -iq "^$1$" "$ALLOWLIST" 2>/dev/null
 }
 
-dhcp_mac_exists() {
-    uci show dhcp 2>/dev/null | grep -qi "mac='$1'"
-}
-
-dhcp_ip_exists() {
-    uci show dhcp 2>/dev/null | grep -Fq "ip='$1'"
+block_mac_exists() {
+    grep -iq "^$1$" "$BLOCKLIST" 2>/dev/null
 }
 
 process_flow() {
@@ -137,83 +122,87 @@ process_flow() {
     case "$STEP" in
         "WAIT_MAC")
             echo "$1" | grep -qE '^([A-Fa-f0-9]{2}:){5}[A-Fa-f0-9]{2}$' || {
+                send_message "MAC invalido (use aa:bb:cc:dd:ee:ff)."
+                return
+            }
+
+            MAC=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+
+            if mac_exists "$MAC"; then
+                send_message "Este MAC ja esta na allowlist."
+                cancel_flow
+                return
+            fi
+
+            echo "STEP=WAIT_PASS
+MAC=$MAC" > "$STATE_FILE"
+
+            send_message "Autorizar este MAC (apenas ficheiro allowlist + nft)?
+
+MAC: $MAC
+
+Digite a senha (SECRET):"
+        ;;
+
+        "WAIT_PASS")
+            if [ "$1" != "$SECRET" ]; then
+                send_message "Senha incorreta. Cancelado."
+                log_action "Tentativa com senha incorreta (allowlist) MAC $MAC"
+                cancel_flow
+                return
+            fi
+
+            [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
+            monitor_mac_file_remove_line "$BLOCKLIST" "$MAC"
+            grep -qxF "$MAC" "$ALLOWLIST" 2>/dev/null || echo "$MAC" >> "$ALLOWLIST"
+
+            monitor_apply_mac_acl
+
+            send_message "MAC autorizado (allowlist). Se nft aplicou, trafego segue as regras em /etc/monitor (MAC_ENFORCE / blocklist)."
+            log_action "Allowlist + $MAC (sem DHCP estatico)"
+            rm -f "$STATE_FILE"
+        ;;
+
+        "WAIT_MAC_BLOQ")
+            echo "$1" | grep -qE '^([A-Fa-f0-9]{2}:){5}[A-Fa-f0-9]{2}$' || {
                 send_message "MAC invalido."
                 return
             }
 
             MAC=$(echo "$1" | tr '[:upper:]' '[:lower:]')
 
-            if mac_exists "$MAC" || dhcp_mac_exists "$MAC"; then
-                send_message "MAC ja esta na allowlist ou reserva DHCP."
+            if block_mac_exists "$MAC"; then
+                send_message "Este MAC ja esta na blocklist."
                 cancel_flow
                 return
             fi
 
-            echo "STEP=WAIT_NAME
+            echo "STEP=WAIT_PASS_BLOQ
 MAC=$MAC" > "$STATE_FILE"
 
-            send_message "Informe o nome:"
-        ;;
-
-        "WAIT_NAME")
-            echo "STEP=WAIT_IP
-MAC=$MAC
-NAME=$1" > "$STATE_FILE"
-
-            send_message "Informe o IP:"
-        ;;
-
-        "WAIT_IP")
-            echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || {
-                send_message "IP invalido."
-                return
-            }
-
-            if dhcp_ip_exists "$1"; then
-                send_message "IP ja esta em uso no DHCP."
-                cancel_flow
-                return
-            fi
-
-            echo "STEP=WAIT_PASS
-MAC=$MAC
-NAME=$NAME
-IP=$1" > "$STATE_FILE"
-
-            send_message "Resumo:
+            send_message "Bloquear este MAC na bridge (DROP nft)?
 
 MAC: $MAC
-Nome: $NAME
-IP: $1
 
-Digite a senha para confirmar:"
+Retira da allowlist se estiver. Digite a senha:"
         ;;
 
-        "WAIT_PASS")
+        "WAIT_PASS_BLOQ")
             if [ "$1" != "$SECRET" ]; then
                 send_message "Senha incorreta. Cancelado."
-                log_action "Tentativa com senha incorreta para MAC $MAC"
+                log_action "Tentativa com senha incorreta (blocklist) MAC $MAC"
                 cancel_flow
                 return
             fi
 
-            [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
-            echo "$MAC" >> "$ALLOWLIST"
+            [ -f "$BLOCKLIST" ] || touch "$BLOCKLIST"
+            monitor_mac_file_remove_line "$ALLOWLIST" "$MAC"
+            grep -qxF "$MAC" "$BLOCKLIST" 2>/dev/null || echo "$MAC" >> "$BLOCKLIST"
 
-            uci add dhcp host
-            uci set dhcp.@host[-1].name="$NAME"
-            uci set dhcp.@host[-1].mac="$MAC"
-            uci set dhcp.@host[-1].ip="$IP"
-            uci commit dhcp
+            monitor_apply_mac_acl
 
-            if dnsmasq_restart_throttled; then
-                send_message "MAC cadastrado com sucesso."
-                log_action "MAC $MAC ($NAME - $IP) cadastrado com sucesso"
-            else
-                send_message "MAC cadastrado (uci). dnsmasq em cooldown; em breve: /etc/init.d/dnsmasq restart"
-                log_action "MAC $MAC ($NAME - $IP) uci ok; dnsmasq em cooldown"
-            fi
-
+            send_message "MAC bloqueado (blocklist + nft). Retirado da allowlist se existia."
+            log_action "Blocklist + $MAC"
             rm -f "$STATE_FILE"
         ;;
     esac
@@ -228,7 +217,11 @@ handle_command() {
         ;;
         "/adiciona_mac")
             echo "STEP=WAIT_MAC" > "$STATE_FILE"
-            send_message "Informe o MAC (ou /cancelar)"
+            send_message "Envie o MAC (aa:bb:cc:dd:ee:ff). Depois pediremos a senha. Sem reserva DHCP — só allowlist + nft. /cancelar"
+        ;;
+        "/bloqueia_mac")
+            echo "STEP=WAIT_MAC_BLOQ" > "$STATE_FILE"
+            send_message "MAC a bloquear (aa:bb:...). Remove da allowlist e acrescenta à blocklist (nft DROP). /cancelar"
         ;;
         "/cancelar")
             cancel_flow
@@ -270,9 +263,10 @@ handle_command() {
 📊 Estado
   /status — uptime, load, RAM, IP público WAN + WAN2, rota default
 
-🛡 MAC allowlist
-  /adiciona_mac — cadastrar equipamento
-  /nao_autorizados — listar quem está fora da allowlist (agora)
+🛡 MAC (allowlist / blocklist + nft)
+  /adiciona_mac — autorizar MAC (só ficheiro; sem DHCP estático)
+  /bloqueia_mac — bloquear MAC (DROP na bridge se nft OK)
+  /nao_autorizados — listar fora da allowlist
   /cancelar — cancelar fluxo
 
 🔧 Checagens (background → alertas Telegram)

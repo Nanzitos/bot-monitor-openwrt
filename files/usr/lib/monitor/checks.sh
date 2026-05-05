@@ -185,6 +185,8 @@ checks_collect_unknown_neighbors() {
     _out="$1"
     checks_ensure_state
     [ -f "$ALLOWLIST" ] || touch "$ALLOWLIST"
+    BLOCKLIST="${BLOCKLIST:-/etc/monitor/mac_blocklist}"
+    [ -f "$BLOCKLIST" ] || touch "$BLOCKLIST"
     checks_build_wifi_cache
     : > "$_out"
     ip neigh show | while read -r IP _ DEV _ MAC STATE _; do
@@ -215,9 +217,13 @@ checks_collect_unknown_neighbors() {
             [ -z "$WIFI_SSID" ] && WIFI_SSID="SSID_desconhecido"
         fi
 
-        if ! grep -iq "^$MAC$" "$ALLOWLIST"; then
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MAC" "$IP" "$HOSTNAME" "$VLAN_NAME" "$CONNECTION_TYPE" "$WIFI_SSID" "$STATE" >> "$_out"
+        if grep -iq "^$MAC$" "$ALLOWLIST"; then
+            continue
         fi
+        if grep -iq "^$MAC$" "$BLOCKLIST" 2>/dev/null; then
+            continue
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$MAC" "$IP" "$HOSTNAME" "$VLAN_NAME" "$CONNECTION_TYPE" "$WIFI_SSID" "$STATE" >> "$_out"
     done
     sort -u -t'	' -k1,1 "$_out" > "${_out}.sort" 2>/dev/null && mv "${_out}.sort" "$_out"
 }

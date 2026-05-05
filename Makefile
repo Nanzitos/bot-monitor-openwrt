@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=monitor
 PKG_VERSION:=1.0
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -24,6 +24,7 @@ endef
 define Package/monitor/conffiles
 /etc/monitor/config.env
 /etc/monitor/mac_allowlist
+/etc/monitor/mac_blocklist
 endef
 
 define Package/monitor/postinst
@@ -78,11 +79,13 @@ define Package/monitor/install
 	$(INSTALL_DIR) $(1)/etc/monitor
 	$(INSTALL_DATA) ./files/etc/monitor/config.env $(1)/etc/monitor/
 	$(INSTALL_DATA) ./files/etc/monitor/mac_allowlist $(1)/etc/monitor/
+	$(INSTALL_DATA) ./files/etc/monitor/mac_blocklist $(1)/etc/monitor/
 
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./files/usr/bin/monitor-network $(1)/usr/bin/
 	ln -sf monitor-network $(1)/usr/bin/network-monitor
 	$(INSTALL_BIN) ./files/usr/bin/monitor-bot $(1)/usr/bin/
+	$(INSTALL_BIN) ./files/usr/bin/monitor-apply-mac-acl $(1)/usr/bin/
 	$(INSTALL_BIN) ./files/usr/bin/monitor-clear-logs $(1)/usr/bin/
 
 	$(INSTALL_DIR) $(1)/usr/lib/monitor

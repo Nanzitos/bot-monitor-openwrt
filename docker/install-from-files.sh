@@ -11,13 +11,15 @@ mkdir -p "$ROOT/etc/monitor" "$ROOT/usr/bin" "$ROOT/usr/lib/monitor" \
 
 cp -a "$SRC/etc/monitor/config.env" "$ROOT/etc/monitor/"
 cp -a "$SRC/etc/monitor/mac_allowlist" "$ROOT/etc/monitor/"
+cp -a "$SRC/etc/monitor/mac_blocklist" "$ROOT/etc/monitor/"
 
 # cp+chmod (BusyBox/OpenWrt rootfs pode não ter o binário `install`)
 cp -a "$SRC/usr/bin/monitor-network" "$ROOT/usr/bin/monitor-network"
 ln -sf monitor-network "$ROOT/usr/bin/network-monitor"
 cp -a "$SRC/usr/bin/monitor-bot" "$ROOT/usr/bin/monitor-bot"
 cp -a "$SRC/usr/bin/monitor-clear-logs" "$ROOT/usr/bin/monitor-clear-logs"
-chmod 755 "$ROOT/usr/bin/monitor-network" "$ROOT/usr/bin/monitor-bot" "$ROOT/usr/bin/monitor-clear-logs"
+cp -a "$SRC/usr/bin/monitor-apply-mac-acl" "$ROOT/usr/bin/monitor-apply-mac-acl"
+chmod 755 "$ROOT/usr/bin/monitor-network" "$ROOT/usr/bin/monitor-bot" "$ROOT/usr/bin/monitor-clear-logs" "$ROOT/usr/bin/monitor-apply-mac-acl"
 
 for f in "$SRC/usr/lib/monitor"/*.sh; do
     [ -f "$f" ] || continue

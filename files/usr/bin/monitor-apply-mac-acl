@@ -1,0 +1,5 @@
+#!/bin/sh
+# Aplica /etc/monitor/mac_allowlist + mac_blocklist no nftables (bridge).
+. /usr/lib/monitor/mac_acl.sh
+monitor_apply_mac_acl
+exit 0
