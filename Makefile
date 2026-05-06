@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=monitor
 PKG_VERSION:=1.0
-PKG_RELEASE:=6
+PKG_RELEASE:=8
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -12,13 +12,14 @@ define Package/monitor
   SECTION:=utils
   CATEGORY:=Utilities
   TITLE:=OpenWrt Monitor (Telegram)
-  # Sem DEPENDS aqui: no SDK evita compilar toda a árvore do curl/mbedtls em paralelo
-  # (falhas comuns: OOM / -jN / Docker). No router: opkg install curl jsonfilter antes ou a seguir.
+  # netperf: teste de velocidade (/check_velocidade); curl/jsonfilter continuam opcionais no .ipk
+  # (evita drag pesado no SDK; no router: opkg install curl jsonfilter).
+  DEPENDS:=+netperf
 endef
 
 define Package/monitor/description
  Monitoramento de rede e automação via Telegram.
- Requer no dispositivo: curl e jsonfilter (opkg install curl jsonfilter).
+ Requer: netperf (dependência; teste de velocidade por WAN). Instalar também: curl e jsonfilter (opkg install curl jsonfilter).
 endef
 
 define Package/monitor/conffiles

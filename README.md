@@ -33,6 +33,7 @@ Documentação operacional: **[docs/servicos-e-logs.md](docs/servicos-e-logs.md)
     │   └── lib/
     │       └── monitor/
     │           ├── checks.sh
+    │           ├── speed_netperf.sh
     │           ├── configs.sh
     │           ├── mac_acl.sh
     │           ├── telegram.sh
@@ -53,7 +54,7 @@ No roteador, em tempo de execução, também entram em uso diretórios como `/tm
 1. Copie este diretório para a árvore de pacotes do SDK ou buildroot OpenWrt (por exemplo `package/monitor/`), mantendo `Makefile` e `files/` como estão.
 2. No diretório raiz do build OpenWrt, compile o pacote, por exemplo:
    - `make package/monitor/compile V=s`
-3. Instale o `.ipk` gerado no roteador (`opkg install monitor_*.ipk`). Garanta **`curl`** e **`jsonfilter`** (`opkg install curl jsonfilter`) — não vêm como dependência automática do pacote.
+3. Instale o `.ipk` gerado no roteador (`opkg install monitor_*.ipk`). O pacote declara dependência de **`netperf`** (usado em **`/check_velocidade`** / `monitor-network speed-notify`). Garanta também **`curl`** e **`jsonfilter`** (`opkg install curl jsonfilter`) — não entram como dependência automática do pacote (evitar arrastar builds pesados no SDK).
 
 ### `.ipk` no PC com Docker (repositório só com este pacote)
 
@@ -85,6 +86,9 @@ Edite `/etc/monitor/config.env` no dispositivo (valores de exemplo no repositór
 | `STATE_DIR` | Estado temporário (ex.: `/tmp/monitor`) |
 | `DDOS_MAX_PER_IP` | (opcional) limiar conntrack por IP; ver `checks.sh` |
 | `PORT_SPIKE_MIN` | (opcional) eventos `MONITOR_DROP` por porta no minuto |
+| `SPEEDTEST_HOST`, `SPEEDTEST_DURATION`, `SPEEDTEST_STREAMS` | (opcional) servidor e parâmetros do teste netperf por WAN; ver comentários em `config.env` |
+
+**Teste de velocidade (`/check_velocidade`):** usa o binário **`netperf`** com bind ao IP de cada WAN. O pacote **`monitor`** declara **`netperf`** como dependência OpenWrt; os scripts **não** executam `opkg install` automaticamente. Se `netperf` faltar, o Telegram mostra aviso com `opkg install netperf`.
 
 **Allowlist / blocklist:** edita os ficheiros ou usa o Telegram — **`/adiciona_mac`** (só grava na allowlist + reaplica nft; **sem** reserva DHCP estático), **`/bloqueia_mac`** (allowlist → blocklist). O script **`/usr/bin/monitor-apply-mac-acl`** recria regras **nftables** (`bridge monitor_acl`). Exige **`nft`** no sistema.
 
@@ -114,6 +118,7 @@ O pacote instala `/etc/init.d/monitor`. No **`start`**: corre **`monitor-apply-m
 * mwan3 (failover WAN)
 * Telegram Bot API (getUpdates + sendMessage)
 * curl + jsonfilter
+* netperf (dependência do pacote; teste de velocidade)
 
 ---
 
@@ -168,6 +173,7 @@ monitor-apply-mac-acl
 * mwan3 (failover WAN)
 * Telegram Bot API (getUpdates + sendMessage)
 * curl + jsonfilter
+* netperf (dependência do pacote; teste de velocidade)
 
 ## Requisitos de segurança
 

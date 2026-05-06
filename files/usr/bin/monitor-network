@@ -38,8 +38,7 @@ case "$MODE" in
     ;;
     speed-notify)
         unset CHECK_SPEED_QUIET
-        export SPEED_SAMPLE_SEC="${SPEED_SAMPLE_NOTIFY_SEC:-15}"
-        export CHECK_SPEED_HTTP=1
+        export CHECK_SPEED_NETPERF=1
         checks_speed_only
     ;;
     all)
@@ -54,7 +53,7 @@ case "$MODE" in
         echo "  ddos        Heuristica conntrack por IP (15 min)"
         echo "  portscan    Pico DPT em MONITOR_DROP (15 min)"
         echo "  speed       Velocidade RX/TX no log local (30 min; sem Telegram)"
-        echo "  speed-notify  Velocidade com alerta Telegram"
+        echo "  speed-notify  Speedtest netperf (opkg) + Telegram HTML"
         echo "  all         Todos os modulos (Telegram / manual)"
     ;;
     *)

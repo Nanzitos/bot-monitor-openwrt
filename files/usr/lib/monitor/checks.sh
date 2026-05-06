@@ -55,6 +55,8 @@ $MESSAGE"
     send_message_html "$FINAL_MESSAGE" || monitor_log "telegram: log_event falhou ($LEVEL)"
 }
 
+. /usr/lib/monitor/speed_netperf.sh
+
 ############################
 # WiFi: cache por ciclo
 ############################
@@ -520,6 +522,11 @@ checks_http_download_mbps() {
 }
 
 check_wan_speed() {
+    if [ "${CHECK_SPEED_NETPERF:-0}" = "1" ]; then
+        check_wan_speed_netperf
+        return $?
+    fi
+
     _sec="${SPEED_SAMPLE_SEC:-10}"
     _http="${CHECK_SPEED_HTTP:-0}"
     _url="${SPEED_TEST_URL:-https://proof.ovh.net/files/10Mb.dat}"

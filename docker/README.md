@@ -17,7 +17,7 @@ make -f Makefile.ipk ipk
 
 O ficheiro fica em **`ipk-out/monitor.ipk`** (na raiz do repo). Copia para o router e `opkg install /tmp/monitor.ipk`.
 
-No router, instala também **`curl`** e **`jsonfilter`** se ainda não existirem: `opkg install curl jsonfilter` (o `.ipk` do `monitor` não declara dependências no control file, para o build no Docker não compilar metade do sistema).
+No router, instala também **`curl`** e **`jsonfilter`** se ainda não existirem: `opkg install curl jsonfilter`. O pacote **`monitor`** declara **`netperf`** (teste **`/check_velocidade`**); `curl`/`jsonfilter` continuam manuais para não inflacionar o build no Docker.
 
 Para **outro target**, altera `SDK_URL` em `docker/docker-compose.ipk.yml` (ou `docker build --build-arg SDK_URL=... -f docker/Dockerfile.sdk .` com contexto na raiz do repo). O URL do `.tar.zst` está na pasta do target em [downloads.openwrt.org/releases](https://downloads.openwrt.org/releases/).
 

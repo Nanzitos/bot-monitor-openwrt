@@ -11,7 +11,7 @@ Este documento descreve o que o pacote **monitor** arranca no OpenWrt, onde escr
 | **Monitor de rede** | `/usr/bin/monitor-network` | Checagens de rede (`checks.sh`). Invocado pelo **cron**; também manual ou Telegram (`/checks`, …). **`network-monitor`** = symlink. |
 | **Bot Telegram** | `/usr/bin/monitor-bot` | Comandos: `/status`, `/checks`, checagens `/check_*`, **`/adiciona_mac`** (allowlist + nft, sem DHCP estático), **`/bloqueia_mac`** (blocklist + nft), `/nao_autorizados`, `/cancelar`, … |
 
-Dependências em runtime (não vêm como dependência forçada do `.ipk`): **`curl`**, **`jsonfilter`**. Para ACL MAC: **`nft`** (nftables).
+Dependências em runtime: o `.ipk` do **monitor** declara **`netperf`** (teste de velocidade por WAN: Telegram **`/check_velocidade`**, `monitor-network speed-notify`). Os scripts **não** instalam pacotes via `opkg` sem consentimento. **`curl`** e **`jsonfilter`** continuam a ser instalados manualmente no router (`opkg install curl jsonfilter`). Para ACL MAC: **`nft`** (nftables).
 
 ## MAC allowlist, blocklist e deteção
 

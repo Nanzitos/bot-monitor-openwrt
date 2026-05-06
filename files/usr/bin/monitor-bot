@@ -315,7 +315,7 @@ handle_command() {
         ;;
         "/check_velocidade")
             [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network speed-notify >/dev/null 2>&1 &
-            send_message "Medicao (~15s/link + download HTTP por WAN) em background."
+            send_message "Speedtest netperf por WAN (requer netperf no sistema; ~50s por link em background)."
         ;;
         "/nao_autorizados"|"/macs_bloqueados")
             process_nao_autorizados
@@ -346,7 +346,7 @@ handle_command() {
   /check_scan — MONITOR_DROP (scan interno)
   /check_ddos — diagnóstico conexões (conntrack/netstat)
   /check_portas — pico de porta (MONITOR_DROP)
-  /check_velocidade — tráfego no link + teste HTTP por WAN
+  /check_velocidade — netperf por WAN (download/upload; relatório HTML no Telegram)
 
 ℹ️ /help"
         ;;
