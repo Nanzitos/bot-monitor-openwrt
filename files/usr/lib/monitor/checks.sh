@@ -113,9 +113,12 @@ check_wan() {
 ############################
 
 check_failover() {
-    ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '/dev/ {print $5}')
+    ROUTE=$(ip route get 8.8.8.8 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
+    [ -z "$ROUTE" ] && return 0
 
-    if [ "$ROUTE" = "wan2" ]; then
+    WAN2_DEV=$(checks_iface_dev wan2)
+
+    if [ -n "$WAN2_DEV" ] && [ "$ROUTE" = "$WAN2_DEV" ]; then
         [ ! -f "$FAILOVER_STATE" ] && \
         checks_log_event "WARNING" "Failover ativo (WAN2 em uso)." && \
         touch "$FAILOVER_STATE"

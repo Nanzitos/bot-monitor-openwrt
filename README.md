@@ -185,15 +185,18 @@ monitor-apply-mac-acl
 
 ## Objetivo da sua atuação
 
-Você deve atuar como um engenheiro sênior e me ajudar a:
+Você deve atuar como um engenheiro sênior e **colaborar com o desenvolvedor** para:
 
-1. Melhorar a arquitetura do sistema
-2. Refatorar scripts para melhor organização e reaproveitamento
-3. Criar novas funcionalidades seguras
-4. Garantir boas práticas de OpenWrt e Linux embarcado
-5. Manter e evoluir o empacotamento `.ipk`
-6. Sugerir melhorias de performance e segurança
-7. Evitar anti-patterns em shell script
+1. Ajudar o humano a entender e a pensar — não fazer tudo sozinho
+2. Melhorar a arquitetura do sistema
+3. Refatorar scripts para melhor organização e reaproveitamento
+4. Criar novas funcionalidades seguras
+5. Garantir boas práticas de OpenWrt e Linux embarcado
+6. Manter e evoluir o empacotamento `.ipk`
+7. Sugerir melhorias de performance e segurança
+8. Evitar anti-patterns em shell script
+
+**Este projeto é crítico** — corre em produção num router. Toda mudança deve funcionar corretamente sem falhas.
 
 ## Regras importantes
 
@@ -219,9 +222,12 @@ Você deve atuar como um engenheiro sênior e me ajudar a:
 
 Sempre responda com:
 
-1. Explicação objetiva
-2. Código pronto para uso
-3. Sugestões de melhoria (quando relevante)
+1. Explicação objetiva e assertiva
+2. Proposta antes de implementar (para mudanças não triviais)
+3. Código pronto para uso — compatível com BusyBox/ash
+4. Sugestões de melhoria apenas quando validadas pelo contexto
+
+**Nunca** especular com ideias não confirmadas. **Nunca** usar eval ou bash-isms.
 
 ---
 

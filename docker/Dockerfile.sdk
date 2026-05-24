@@ -31,11 +31,6 @@ RUN wget -q "$SDK_URL" -O /tmp/sdk.tar.zst \
 
 WORKDIR /work/sdk
 
-# Contexto de build = raiz do repositório (Makefile + files/)
-COPY Makefile package/monitor/
-COPY files package/monitor/files
-COPY docker/repack-ipk-opkg-compat.sh /work/repack-ipk-opkg-compat.sh
-
 RUN git config --global user.email "docker@build.local" \
     && git config --global user.name "Docker Build"
 
@@ -56,7 +51,8 @@ RUN git config --global http.postBuffer 524288000 \
     && git config --global core.compression 0 \
     && git config --global fetch.parallel 1
 
-# -j1: pacote só scripts; -jN puxava compilação pesada de deps (curl/mbedtls) em paralelo e falhava no Docker.
+# feeds update + defconfig independentes do código do pacote → ficam em cache Docker/GHA.
+# Só invalida se SDK_URL ou feeds.conf.default mudar.
 RUN set -e; \
     n=0; \
     until ./scripts/feeds update -a; do \
@@ -70,8 +66,16 @@ RUN set -e; \
       sleep 30; \
     done; \
     test -d feeds/base || (echo "feeds/base em falta após update" && exit 1); \
-    make defconfig; \
-    make package/monitor/clean 2>/dev/null || true; \
+    make defconfig
+
+# Contexto de build = raiz do repositório (Makefile + files/).
+# COPY após feeds/defconfig → mudanças no pacote só invalidam camadas a partir daqui.
+COPY docker/repack-ipk-opkg-compat.sh /work/repack-ipk-opkg-compat.sh
+COPY Makefile package/monitor/
+COPY files package/monitor/files
+
+# -j1: pacote só scripts; -jN puxava compilação pesada de deps em paralelo e falhava no Docker.
+RUN make package/monitor/clean 2>/dev/null || true && \
     make package/monitor/compile V=s -j1
 
 # OpenWrt .ipk = gzip(tar(debian-binary, data.tar.gz, control.tar.gz)); opkg não usa ar por fora.

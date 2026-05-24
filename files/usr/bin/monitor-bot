@@ -317,6 +317,34 @@ handle_command() {
             [ -x /usr/bin/monitor-network ] && /usr/bin/monitor-network speed-notify >/dev/null 2>&1 &
             send_message "Speedtest netperf por WAN (requer netperf no sistema; ~50s por link em background)."
         ;;
+        "/restart")
+            send_message "Reiniciando o serviço monitor..."
+            log_action "restart solicitado pelo utilizador"
+            nohup sh -c 'sleep 3 && /etc/init.d/monitor restart' >/dev/null 2>&1 &
+        ;;
+        "/logs")
+            _log="${LOG_DIR}/monitor.log"
+            _audit="${LOG_DIR}/telegram_audit.log"
+            _out=""
+            if [ -f "$_log" ] && [ -s "$_log" ]; then
+                _lines=$(tail -n 20 "$_log")
+                _out="📋 monitor.log (últimas 20):
+
+$_lines"
+            else
+                _out="📋 monitor.log: vazio."
+            fi
+            if [ -f "$_audit" ] && [ -s "$_audit" ]; then
+                _alines=$(tail -n 10 "$_audit")
+                _out="$_out
+
+📋 telegram_audit (últimas 10):
+
+$_alines"
+            fi
+            [ -z "$_out" ] && _out="Sem logs disponíveis."
+            send_message "$_out"
+        ;;
         "/nao_autorizados"|"/macs_bloqueados")
             process_nao_autorizados
         ;;
@@ -347,6 +375,10 @@ handle_command() {
   /check_ddos — diagnóstico conexões (conntrack/netstat)
   /check_portas — pico de porta (MONITOR_DROP)
   /check_velocidade — netperf por WAN (download/upload; relatório HTML no Telegram)
+
+⚙️ Sistema
+  /restart — reiniciar o serviço monitor
+  /logs — últimas linhas de monitor.log e telegram_audit.log
 
 ℹ️ /help"
         ;;

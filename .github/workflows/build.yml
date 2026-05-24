@@ -1,0 +1,76 @@
+name: Build monitor.ipk
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build SDK image (com cache GitHub Actions)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.sdk
+          load: true
+          tags: monitor-ipk-builder:local
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extrair monitor.ipk da imagem
+        run: |
+          mkdir -p ipk-out
+          docker run --rm \
+            -v "$PWD/ipk-out:/export" \
+            monitor-ipk-builder:local \
+            sh -c 'set -e; cp -a /work/monitor.ipk /export/; ls -la /export/monitor.ipk'
+
+      - name: Verificar integridade do .ipk
+        run: |
+          gzip -t ipk-out/monitor.ipk
+          gzip -dc ipk-out/monitor.ipk | tar -tf - | grep -q 'control\.tar\.gz'
+          echo "monitor.ipk OK"
+
+      - name: Upload artefacto (PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-ipk-pr${{ github.event.number }}
+          path: ipk-out/monitor.ipk
+          retention-days: 14
+
+      - name: Criar GitHub Release (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ipk-out/monitor.ipk
+          generate_release_notes: true
+          body: |
+            ## Instalação no router OpenWrt
+
+            ```sh
+            opkg update
+            opkg install monitor_*.ipk
+            # Dependências adicionais (se ainda não instaladas):
+            opkg install curl jsonfilter
+            ```
+
+            Configurar `/etc/monitor/config.env` após instalação e reiniciar o serviço:
+
+            ```sh
+            /etc/init.d/monitor restart
+            ```
