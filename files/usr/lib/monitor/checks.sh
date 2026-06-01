@@ -290,18 +290,30 @@ check_mac() {
     checks_collect_unknown_neighbors "$_f"
     [ ! -s "$_f" ] && return 0
 
-    checks_block_prompt_schedule_from_collect "$_f"
-
-    _n=$(wc -l < "$_f" | tr -d ' ')
+    # CRITICAL só para MACs verdadeiramente novos (não ainda em block_prompt nem ignorados).
+    # Tem de ser ANTES de checks_block_prompt_schedule_from_collect, que cria os ficheiros
+    # block_prompt e tornaria todos os MACs "já vistos" nesta mesma iteração.
+    _pd="$STATE_DIR/block_prompt"
+    _ign="$STATE_DIR/block_prompt_ignore"
+    _n=0
     _body=""
     while IFS='	' read -r MAC IP HOST VLAN CONN WIFI STATE; do
         [ -z "$MAC" ] && continue
+        _slug=$(checks_mac_to_slug "$MAC")
+        [ -f "$_pd/$_slug" ] && continue
+        [ -f "$_ign/$_slug" ] && continue
         _one=$(printf '%s — IP:%s host:%s VLAN:%s %s WiFi:%s ARP:%s' "$MAC" "$IP" "$HOST" "$VLAN" "$CONN" "$WIFI" "$STATE")
         _one=$(checks_escape_html_line "$_one")
         _body="$_body
 
 • $_one"
+        _n=$((_n + 1))
     done < "$_f"
+
+    checks_block_prompt_schedule_from_collect "$_f"
+    rm -f "$_f"
+
+    [ "$_n" -eq 0 ] && return 0
 
     _lim=3200
     _blen=$(printf '%s' "$_body" | wc -c | tr -d ' ')
@@ -313,7 +325,6 @@ check_mac() {
     fi
 
     checks_log_event "CRITICAL" "Dispositivos fora da allowlist ($_n):${_body}"
-    rm -f "$_f"
 }
 
 ############################
